@@ -105,7 +105,7 @@ banner() {
     grule 50
     echo
     echo "  ${MUTED}This KVM presses the attached PC's power/reset wires.${R}"
-    echo "  ${MUTED}dominus KVM → dominus-nobara    amarillokvm → amarillo${R}"
+    [ -n "${ATX_TARGET_LABEL:-}" ] && echo "  ${MUTED}attached PC: ${W}${ATX_TARGET_LABEL}${R}"
     echo
 }
 
@@ -205,7 +205,7 @@ do_on() {
 do_off() {
     echo "  ${YEL}GRACEFUL OFF${R} — short power-button pulse while the PC is on."
     echo "  ${MUTED}Asks the OS to shut down (ACPI). May sit in 'on' until userspace exits.${R}"
-    echo "  ${RED}If this KVM is 'dominus', that is THIS workstation.${R}"
+    echo "  ${RED}If the attached PC is the machine you're SSHed in from, this ends your session too.${R}"
     confirm "Ask the attached PC to shut down (graceful)?" || return
     run_atx power_off 4 "Short click while on. Same as a normal press of the power button."
 }
