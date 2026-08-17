@@ -30,6 +30,7 @@ MUTED=$'\033[38;2;138;120;172m'    # muted lavender-grey, replaces "dim"
 W=$'\033[97m'
 DIM="$MUTED"
 ITALIC=$'\033[3m'                  # SGR 3 — real italics on most modern terminal fonts
+BGSEL=$'\033[48;2;46;28;74m'       # selection highlight background
 
 # Gradient magenta(242,34,255) -> cyan(5,217,232), used by bar() and grule().
 _grad() {
@@ -86,23 +87,132 @@ ok()   { echo "  ${GRN}▸${R} $*"; }
 warn() { echo "  ${YEL}▸${R} $*"; }
 err()  { echo "  ${RED}▸${R} $*"; }
 
-banner() {
-    clear 2>/dev/null || printf '\033c'
-    echo
-    echo "${YEL}  ██████╗ ██╗     ██╗  ██╗██╗   ██╗███╗   ███╗${R}"
-    echo "${ORANGE} ██╔════╝ ██║     ██║ ██╔╝██║   ██║████╗ ████║${R}"
-    echo "${PINK} ██║  ███╗██║     █████╔╝ ██║   ██║██╔████╔██║${R}"
-    echo "${MAG} ██║   ██║██║     ██╔═██╗ ╚██╗ ██╔╝██║╚██╔╝██║${R}"
-    echo "${PURPLE} ╚██████╔╝███████╗██║  ██╗ ╚████╔╝ ██║ ╚═╝ ██║${R}"
-    echo "${CYAN}  ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚═╝${R}"
-    echo
-    echo "                    ${MUTED}${ITALIC}ATX remote power console${R}"
-    echo
+# ── TUI mechanics: raw mode, alt screen, arrow-key nav ──────────────
+# `read -N` (not `-n`) is required: under a real tty, ICRNL/newline
+# handling means Enter's byte can be silently swallowed as a line
+# delimiter by `-n`, never reaching the case statement. Verified against
+# a real pty (tmux), not just piped input, which does not exhibit this.
+STTY_ORIG=""
+tui_enter() {
+    STTY_ORIG="$(stty -g 2>/dev/null || true)"
+    stty -echo -icanon -icrnl -inlcr -ixon min 1 time 0 2>/dev/null || true
+    printf '\033[?1049h\033[?25l'
+}
+tui_leave() {
+    printf '\033[?25h\033[?1049l'
+    [ -n "$STTY_ORIG" ] && stty "$STTY_ORIG" 2>/dev/null || true
+}
+trap tui_leave EXIT INT TERM
+
+read_key() {
+    local k k2 k3
+    IFS= read -rsN1 k || { echo QUIT; return; }
+    case "$k" in
+        $'\x1b')
+            if read -rsN1 -t 0.05 k2 2>/dev/null; then
+                if [ "$k2" = '[' ]; then
+                    read -rsN1 -t 0.05 k3 2>/dev/null
+                    case "$k3" in
+                        A) echo UP ;; B) echo DOWN ;;
+                        C) echo RIGHT ;; D) echo LEFT ;;
+                        *) echo ESC ;;
+                    esac
+                else
+                    echo ESC
+                fi
+            else
+                echo ESC
+            fi
+            ;;
+        $'\r'|$'\n') echo ENTER ;;
+        q|Q) echo QUIT ;;
+        *) echo "$k" ;;
+    esac
+}
+
+KEYS=(1 2 3 4 5 6 7 8 9)
+LABELS=("status" "power on" "power off" "power off HARD" "reset" "raw short click" "raw long click" "raw reset click" "board serial")
+HINTS=("read power_state" "graceful start if off" "ACPI / short press" "long hold — last resort" "reset header, hard reboot" "no on/off check" "no on/off check" "no on/off check" "get_sn")
+SECTION=(0 0 0 0 0 1 1 1 1)   # 0=power 1=raw/info
+BADGES=("READ" "START" "ACPI" "DANGER" "HARD" "RAW" "RAW/HOLD" "RAW" "READ")
+BCOLORS=("$CYAN" "$CYAN" "$CYAN" "$RED" "$YEL" "$CYAN" "$RED" "$CYAN" "$CYAN")
+sel=0
+
+draw_menu() {
+    printf '\033[H'
+    printf '%s\n\033[K' "${YEL}  ██████╗ ██╗     ██╗  ██╗██╗   ██╗███╗   ███╗${R}"
+    printf '%s\n\033[K' "${ORANGE} ██╔════╝ ██║     ██║ ██╔╝██║   ██║████╗ ████║${R}"
+    printf '%s\n\033[K' "${PINK} ██║  ███╗██║     █████╔╝ ██║   ██║██╔████╔██║${R}"
+    printf '%s\n\033[K' "${MAG} ██║   ██║██║     ██╔═██╗ ╚██╗ ██╔╝██║╚██╔╝██║${R}"
+    printf '%s\n\033[K' "${PURPLE} ╚██████╔╝███████╗██║  ██╗ ╚████╔╝ ██║ ╚═╝ ██║${R}"
+    printf '%s\n\033[K' "${CYAN}  ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚═╝${R}"
+    printf '\033[K\n'
+    printf '  %sATX%s %s%sremote power console%s  %shost%s %s%s%s%s' \
+        "$MUTED" "$R" "$MUTED" "$ITALIC" "$R" \
+        "$MUTED" "$R" "$W" "$B" "$HOST" "$R"
+    if [ -n "${ATX_TARGET_LABEL:-}" ]; then
+        printf '  %starget%s %s%s%s%s' "$MUTED" "$R" "$W" "$B" "$ATX_TARGET_LABEL" "$R"
+    fi
+    if [ -e "$DEVICE" ]; then
+        printf '  %sboard%s %s%sPRESENT%s' "$MUTED" "$R" "$GRN" "$B" "$R"
+    else
+        printf '  %sboard%s %s%sABSENT%s' "$MUTED" "$R" "$RED" "$B" "$R"
+    fi
+    printf '\033[K\n'
     grule 50
-    echo "  ${MUTED}host${R}    ${W}${B}${HOST}${R}"
-    [ -n "${ATX_TARGET_LABEL:-}" ] && echo "  ${MUTED}target${R}  ${W}${ATX_TARGET_LABEL}${R}"
-    echo "  ${MUTED}${ITALIC}This KVM presses the attached PC's power/reset wires.${R}"
-    echo
+    printf '\033[K\n'
+
+    local i cur_section=-1
+    for i in "${!LABELS[@]}"; do
+        if [ "${SECTION[$i]}" -ne "$cur_section" ]; then
+            cur_section="${SECTION[$i]}"
+            if [ "$cur_section" -eq 0 ]; then
+                printf '  %s%sPOWER%s\033[K\n' "$PINK" "$B" "$R"
+            else
+                printf '  %s%sRAW / INFO%s\033[K\n' "$PURPLE" "$B" "$R"
+            fi
+        fi
+        if [ "$i" -eq "$sel" ]; then
+            printf '  %s▶ ‹%s› %-17s%-29s%s%s%9s%s\033[K\n' \
+                "${BGSEL}${W}${B}" "${KEYS[$i]}" "${LABELS[$i]}" "${HINTS[$i]}" \
+                "$R" "${BGSEL}${BCOLORS[$i]}${B}" "${BADGES[$i]}" "$R"
+        else
+            printf '    %s‹%s›%s %-17s %s%-29s%s%s%9s%s\033[K\n' \
+                "$MUTED" "${KEYS[$i]}" "$R" "${LABELS[$i]}" "$MUTED" "${HINTS[$i]}" \
+                "$R" "${BCOLORS[$i]}" "${BADGES[$i]}" "$R"
+        fi
+    done
+    printf '\033[K\n'
+    grule 50
+    printf '  %s↑↓%s move   %sentr%s select   %s1-9%s jump   %sq%s quit\033[K\n' \
+        "$W" "$MUTED" "$W" "$MUTED" "$W" "$MUTED" "$W" "$R"
+    printf '\033[J'
+}
+
+confirm_dialog() {
+    local prompt="$1" yes_sel=1   # 0=yes 1=no, default NO
+    while true; do
+        printf '\033[H\033[J\n\n'
+        printf '    %s╭──────────────────────────────────────────╮%s\033[K\n' "$PINK" "$R"
+        printf '    %s│%s  %-42s%s│%s\033[K\n' "$PINK" "$R" "$prompt" "$PINK" "$R"
+        printf '    %s│%s' "$PINK" "$R"
+        if [ "$yes_sel" -eq 0 ]; then
+            printf '     %sYES%s        %sno%s' "${BGSEL}${W}${B}" "$R" "$MUTED" "$R"
+        else
+            printf '     %syes%s        %sNO%s' "$MUTED" "$R" "${BGSEL}${W}${B}" "$R"
+        fi
+        printf '                %s│%s\033[K\n' "$PINK" "$R"
+        printf '    %s╰──────────────────────────────────────────╯%s\033[K\n' "$PINK" "$R"
+        printf '\033[J'
+        local k; k="$(read_key)"
+        case "$k" in
+            LEFT|RIGHT|UP|DOWN) yes_sel=$((1 - yes_sel)) ;;
+            ENTER) [ "$yes_sel" -eq 0 ] && return 0 || return 1 ;;
+            y|Y) return 0 ;;
+            n|N|ESC) return 1 ;;
+            QUIT) return 1 ;;
+        esac
+    done
 }
 
 need_board() {
@@ -148,14 +258,7 @@ show_status() {
 }
 
 confirm() {
-    local prompt="$1"
-    local ans
-    printf "  ${YEL}%s${R}  [y/N] " "$prompt"
-    read -r ans
-    case "$ans" in
-        y|Y|yes|YES) return 0 ;;
-        *) echo "  ${MUTED}cancelled${R}"; return 1 ;;
-    esac
+    confirm_dialog "$1"
 }
 
 run_atx() {
@@ -164,6 +267,7 @@ run_atx() {
     local title="$3"
     local out rc st
 
+    printf '\033[H\033[J'
     echo
     echo "  ${B}what will happen${R}"
     echo "  ${MUTED}${title}${R}"
@@ -248,48 +352,34 @@ do_sn() {
     fi
 }
 
-menu() {
-    grule 50
-    echo "  ${PINK}${B}‹1›${R}  status          ${MUTED}read power_state (on / off / sleep)${R}"
-    echo "  ${CYAN}${B}‹2›${R}  power on        ${MUTED}graceful start if off${R}"
-    echo "  ${CYAN}${B}‹3›${R}  power off       ${MUTED}ACPI / short press  — preferred off${R}"
-    echo "  ${CYAN}${B}‹4›${R}  power off HARD  ${MUTED}long press — last resort${R}"
-    echo "  ${CYAN}${B}‹5›${R}  reset           ${MUTED}reset header — hard reboot${R}"
-    grule 50
-    echo "  ${PURPLE}${B}‹6›${R}  raw short click ${MUTED}no on/off check${R}"
-    echo "  ${PURPLE}${B}‹7›${R}  raw long click"
-    echo "  ${PURPLE}${B}‹8›${R}  raw reset click"
-    echo "  ${PINK}${B}‹9›${R}  board serial    ${MUTED}get_sn${R}"
-    echo "  ${MUTED}${B}‹q›${R}  quit"
-    grule 50
-    printf "  ${MAG}${B}❯${R} ${W}choose${R} "
-}
-
-pause() {
-    printf "  ${MUTED}enter to return to menu${R} "
-    read -r _
-}
-
 main() {
+    tui_enter
+    local k
     while true; do
-        banner
-        need_board || warn "actions that talk to the board will fail until it enumerates"
-        echo
-        menu
-        read -r choice
-        echo
-        case "$choice" in
-            1) show_status; pause ;;
-            2) do_on; pause ;;
-            3) do_off; pause ;;
-            4) do_off_hard; pause ;;
-            5) do_reset; pause ;;
-            6) do_click_short; pause ;;
-            7) do_click_long; pause ;;
-            8) do_click_reset; pause ;;
-            9) do_sn; pause ;;
-            q|Q|0|quit|exit) echo "  ${MUTED}bye${R}"; echo; exit 0 ;;
-            *) warn "not a menu item"; sleep 1 ;;
+        draw_menu
+        k="$(read_key)"
+        case "$k" in
+            UP)   sel=$(( (sel - 1 + ${#LABELS[@]}) % ${#LABELS[@]} )) ;;
+            DOWN) sel=$(( (sel + 1) % ${#LABELS[@]} )) ;;
+            1|2|3|4|5|6|7|8|9) sel=$((k - 1)) ;;
+            ENTER)
+                printf '\033[H\033[J'
+                case "$sel" in
+                    0) show_status ;;
+                    1) do_on ;;
+                    2) do_off ;;
+                    3) do_off_hard ;;
+                    4) do_reset ;;
+                    5) do_click_short ;;
+                    6) do_click_long ;;
+                    7) do_click_reset ;;
+                    8) do_sn ;;
+                esac
+                echo
+                printf '  %spress any key to return%s' "$MUTED" "$R"
+                read_key >/dev/null
+                ;;
+            QUIT) break ;;
         esac
     done
 }
