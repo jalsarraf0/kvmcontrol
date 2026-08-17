@@ -29,6 +29,7 @@ RED=$'\033[38;2;255;51;102m'       # neon red   #ff3366
 MUTED=$'\033[38;2;138;120;172m'    # muted lavender-grey, replaces "dim"
 W=$'\033[97m'
 DIM="$MUTED"
+ITALIC=$'\033[3m'                  # SGR 3 — real italics on most modern terminal fonts
 
 # Gradient magenta(242,34,255) -> cyan(5,217,232), used by bar() and grule().
 _grad() {
@@ -97,15 +98,17 @@ banner() {
     echo "           ${PINK}▀${MAG}▓▓▓▓▓▓▓▓▓▓▓▓▓${PINK}▀${R}"
     echo "             ${MAG}▀▓▓▓▓▓▓▓▓▓▓▓▀${R}"
     echo "                ${PURPLE}▀▀▀▀▀▀▀▀▀▀${R}"
-    echo "     ${PURPLE}╲    ╲     ╲    ${MUTED}│${PURPLE}    ╱     ╱    ╱${R}"
-    echo "  ${PURPLE}╲    ╲     ╲     ╲  ${MUTED}│${PURPLE}  ╱     ╱     ╱    ╱${R}"
-    grule 50
-    echo "  ${PINK}${B}GL-ATXPC${R}  ${MUTED}//${R}  ${CYAN}remote power console${R}"
-    echo "  kvm ${W}${B}${HOST}${R}"
-    grule 50
+    echo "    ${PURPLE}╲     ╲      ╲    ${MUTED}│${PURPLE}    ╱      ╱     ╱${R}"
+    echo "  ${PURPLE}╲     ╲      ╲      ╲  ${MUTED}│${PURPLE}  ╱      ╱      ╱     ╱${R}"
+    echo "${MUTED}  ╲──────────────────────────────────────────────╱${R}"
     echo
-    echo "  ${MUTED}This KVM presses the attached PC's power/reset wires.${R}"
-    [ -n "${ATX_TARGET_LABEL:-}" ] && echo "  ${MUTED}attached PC: ${W}${ATX_TARGET_LABEL}${R}"
+    echo "              ${MUTED}»${R}  $(_grad 0)Ｇ$(_grad 14)Ｌ$(_grad 28)－$(_grad 43)Ａ$(_grad 57)Ｔ$(_grad 71)Ｘ$(_grad 86)Ｐ$(_grad 100)Ｃ${R}  ${MUTED}«${R}"
+    echo "                    ${MUTED}${ITALIC}remote power console${R}"
+    echo
+    grule 50
+    echo "  ${MUTED}host${R}    ${W}${B}${HOST}${R}"
+    [ -n "${ATX_TARGET_LABEL:-}" ] && echo "  ${MUTED}target${R}  ${W}${ATX_TARGET_LABEL}${R}"
+    echo "  ${MUTED}${ITALIC}This KVM presses the attached PC's power/reset wires.${R}"
     echo
 }
 
@@ -254,17 +257,17 @@ do_sn() {
 
 menu() {
     grule 50
-    echo "  ${PINK}${B} 1${R}  status          ${MUTED}read power_state (on / off / sleep)${R}"
-    echo "  ${CYAN}${B} 2${R}  power on        ${MUTED}graceful start if off${R}"
-    echo "  ${CYAN}${B} 3${R}  power off       ${MUTED}ACPI / short press  — preferred off${R}"
-    echo "  ${CYAN}${B} 4${R}  power off HARD  ${MUTED}long press — last resort${R}"
-    echo "  ${CYAN}${B} 5${R}  reset           ${MUTED}reset header — hard reboot${R}"
+    echo "  ${PINK}${B}‹1›${R}  status          ${MUTED}read power_state (on / off / sleep)${R}"
+    echo "  ${CYAN}${B}‹2›${R}  power on        ${MUTED}graceful start if off${R}"
+    echo "  ${CYAN}${B}‹3›${R}  power off       ${MUTED}ACPI / short press  — preferred off${R}"
+    echo "  ${CYAN}${B}‹4›${R}  power off HARD  ${MUTED}long press — last resort${R}"
+    echo "  ${CYAN}${B}‹5›${R}  reset           ${MUTED}reset header — hard reboot${R}"
     grule 50
-    echo "  ${PURPLE}${B} 6${R}  raw short click ${MUTED}no on/off check${R}"
-    echo "  ${PURPLE}${B} 7${R}  raw long click"
-    echo "  ${PURPLE}${B} 8${R}  raw reset click"
-    echo "  ${PINK}${B} 9${R}  board serial    ${MUTED}get_sn${R}"
-    echo "  ${MUTED}${B} q${R}  quit"
+    echo "  ${PURPLE}${B}‹6›${R}  raw short click ${MUTED}no on/off check${R}"
+    echo "  ${PURPLE}${B}‹7›${R}  raw long click"
+    echo "  ${PURPLE}${B}‹8›${R}  raw reset click"
+    echo "  ${PINK}${B}‹9›${R}  board serial    ${MUTED}get_sn${R}"
+    echo "  ${MUTED}${B}‹q›${R}  quit"
     grule 50
     printf "  ${MAG}${B}❯${R} ${W}choose${R} "
 }
