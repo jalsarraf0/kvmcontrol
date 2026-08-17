@@ -89,21 +89,14 @@ err()  { echo "  ${RED}▸${R} $*"; }
 banner() {
     clear 2>/dev/null || printf '\033c'
     echo
-    echo "                ${YEL}▄▄▄▄▄▄▄▄▄▄▄▄${R}"
-    echo "             ${YEL}▄${ORANGE}▓▓▓▓▓▓▓▓▓▓▓▓▓${YEL}▄${R}"
-    echo "           ${ORANGE}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}"
-    echo "          ${ORANGE}▓${PINK}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${ORANGE}▓${R}"
-    echo "          ${MUTED}░░░░░░░░░░░░░░░░░░░${R}"
-    echo "          ${PINK}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}"
-    echo "           ${PINK}▀${MAG}▓▓▓▓▓▓▓▓▓▓▓▓▓${PINK}▀${R}"
-    echo "             ${MAG}▀▓▓▓▓▓▓▓▓▓▓▓▀${R}"
-    echo "                ${PURPLE}▀▀▀▀▀▀▀▀▀▀${R}"
-    echo "    ${PURPLE}╲     ╲      ╲    ${MUTED}│${PURPLE}    ╱      ╱     ╱${R}"
-    echo "  ${PURPLE}╲     ╲      ╲      ╲  ${MUTED}│${PURPLE}  ╱      ╱      ╱     ╱${R}"
-    echo "${MUTED}  ╲──────────────────────────────────────────────╱${R}"
+    echo "${YEL}  ██████╗ ██╗     ██╗  ██╗██╗   ██╗███╗   ███╗${R}"
+    echo "${ORANGE} ██╔════╝ ██║     ██║ ██╔╝██║   ██║████╗ ████║${R}"
+    echo "${PINK} ██║  ███╗██║     █████╔╝ ██║   ██║██╔████╔██║${R}"
+    echo "${MAG} ██║   ██║██║     ██╔═██╗ ╚██╗ ██╔╝██║╚██╔╝██║${R}"
+    echo "${PURPLE} ╚██████╔╝███████╗██║  ██╗ ╚████╔╝ ██║ ╚═╝ ██║${R}"
+    echo "${CYAN}  ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚═╝${R}"
     echo
-    echo "              ${MUTED}»${R}  $(_grad 0)Ｇ$(_grad 14)Ｌ$(_grad 28)－$(_grad 43)Ａ$(_grad 57)Ｔ$(_grad 71)Ｘ$(_grad 86)Ｐ$(_grad 100)Ｃ${R}  ${MUTED}«${R}"
-    echo "                    ${MUTED}${ITALIC}remote power console${R}"
+    echo "                    ${MUTED}${ITALIC}ATX remote power console${R}"
     echo
     grule 50
     echo "  ${MUTED}host${R}    ${W}${B}${HOST}${R}"
