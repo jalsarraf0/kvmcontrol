@@ -33,13 +33,18 @@ ITALIC=$'\033[3m'                  # SGR 3 — real italics on most modern termi
 BGSEL=$'\033[48;2;46;28;74m'       # selection highlight background
 
 # Gradient magenta(242,34,255) -> cyan(5,217,232), used by bar() and grule().
+# Sets $_GRAD_ESC instead of printing to stdout — a plain function call,
+# not a $(...) command substitution, so it doesn't fork a subshell. This
+# runs in a tight per-character loop (grule/bar redraw on every keypress
+# now that the menu is a TUI); forking 50+ subshells per redraw was slow
+# enough on the appliance's modest ARM CPU to make the UI feel hung.
 _grad() {
-    # $1 = t (0-100) -> prints "\033[38;2;r;g;bm"
+    # $1 = t (0-100) -> sets _GRAD_ESC to "\033[38;2;r;g;bm"
     local t="$1" rr gg bb
     rr=$(( 242 + (5 - 242) * t / 100 ))
     gg=$(( 34 + (217 - 34) * t / 100 ))
     bb=$(( 255 + (232 - 255) * t / 100 ))
-    printf '\033[38;2;%d;%d;%dm' "$rr" "$gg" "$bb"
+    _GRAD_ESC=$'\033[38;2;'"${rr};${gg};${bb}m"
 }
 
 grule() {
@@ -48,7 +53,8 @@ grule() {
     printf "  "
     while [ "$c" -lt "$width" ]; do
         t=$(( c * 100 / width ))
-        printf '%s─' "$(_grad "$t")"
+        _grad "$t"
+        printf '%s─' "$_GRAD_ESC"
         c=$((c + 1))
     done
     printf "%s\n" "$R"
@@ -65,18 +71,21 @@ bar() {
     while [ "$i" -le "$secs" ]; do
         pct=$(( i * 100 / secs ))
         filled=$(( width * i / secs ))
-        printf "\r  ${PURPLE}▐${R}"
+        # \033[G (cursor to column 1), not bare \r — some terminal engines
+        # mishandle rapid CR-without-LF redraws under fast repeated writes.
+        printf "\033[G  ${PURPLE}▐${R}"
         c=0
         while [ "$c" -lt "$width" ]; do
             if [ "$c" -lt "$filled" ]; then
                 t=$(( c * 100 / width ))
-                printf '%s█' "$(_grad "$t")"
+                _grad "$t"
+                printf '%s█' "$_GRAD_ESC"
             else
                 printf '%s░' "$MUTED"
             fi
             c=$((c + 1))
         done
-        printf "${R}${PURPLE}▌${R} ${W}%3d%%${R}  " "$pct"
+        printf "${R}${PURPLE}▌${R} ${W}%3d%%${R}  \033[K" "$pct"
         [ "$i" -lt "$secs" ] && sleep 1
         i=$((i + 1))
     done
@@ -93,40 +102,47 @@ err()  { echo "  ${RED}▸${R} $*"; }
 # delimiter by `-n`, never reaching the case statement. Verified against
 # a real pty (tmux), not just piped input, which does not exhibit this.
 STTY_ORIG=""
+TUI_ENTERED=0
 tui_enter() {
     STTY_ORIG="$(stty -g 2>/dev/null || true)"
     stty -echo -icanon -icrnl -inlcr -ixon min 1 time 0 2>/dev/null || true
     printf '\033[?1049h\033[?25l'
+    TUI_ENTERED=1
 }
 tui_leave() {
+    [ "$TUI_ENTERED" -eq 1 ] || return 0
     printf '\033[?25h\033[?1049l'
     [ -n "$STTY_ORIG" ] && stty "$STTY_ORIG" 2>/dev/null || true
 }
 trap tui_leave EXIT INT TERM
 
+# Sets $KEY instead of printing to stdout — called directly, never via
+# $(...). A SIGINT trap doesn't reliably interrupt a blocking read inside
+# a command-substitution subshell until that subshell itself exits, which
+# can make Ctrl-C (and everything else) appear to do nothing.
 read_key() {
     local k k2 k3
-    IFS= read -rsN1 k || { echo QUIT; return; }
+    IFS= read -rsN1 k || { KEY=QUIT; return; }
     case "$k" in
         $'\x1b')
             if read -rsN1 -t 0.05 k2 2>/dev/null; then
                 if [ "$k2" = '[' ]; then
                     read -rsN1 -t 0.05 k3 2>/dev/null
                     case "$k3" in
-                        A) echo UP ;; B) echo DOWN ;;
-                        C) echo RIGHT ;; D) echo LEFT ;;
-                        *) echo ESC ;;
+                        A) KEY=UP ;; B) KEY=DOWN ;;
+                        C) KEY=RIGHT ;; D) KEY=LEFT ;;
+                        *) KEY=ESC ;;
                     esac
                 else
-                    echo ESC
+                    KEY=ESC
                 fi
             else
-                echo ESC
+                KEY=ESC
             fi
             ;;
-        $'\r'|$'\n') echo ENTER ;;
-        q|Q) echo QUIT ;;
-        *) echo "$k" ;;
+        $'\r'|$'\n') KEY=ENTER ;;
+        q|Q) KEY=QUIT ;;
+        *) KEY="$k" ;;
     esac
 }
 
@@ -204,8 +220,8 @@ confirm_dialog() {
         printf '                %s│%s\033[K\n' "$PINK" "$R"
         printf '    %s╰──────────────────────────────────────────╯%s\033[K\n' "$PINK" "$R"
         printf '\033[J'
-        local k; k="$(read_key)"
-        case "$k" in
+        read_key
+        case "$KEY" in
             LEFT|RIGHT|UP|DOWN) yes_sel=$((1 - yes_sel)) ;;
             ENTER) [ "$yes_sel" -eq 0 ] && return 0 || return 1 ;;
             y|Y) return 0 ;;
@@ -353,15 +369,32 @@ do_sn() {
 }
 
 main() {
+    # A pty is required — raw mode + arrow-key reads are undefined
+    # (and client-dependent) without one. `ssh host command` does NOT
+    # allocate a pty by default (only `ssh host` with no command does);
+    # this is what actually broke Termius, not a bug in the read loop
+    # itself: without a real remote pty, `stty` silently no-ops, and
+    # different SSH clients fill that gap differently — some just pass
+    # bytes through, but at least one observed client instead echoed
+    # raw escape sequences as visible garbage and stopped responding to
+    # any key, including Ctrl-C. Confirmed empirically: `ssh host cmd`
+    # -> stdin not a tty; `ssh -tt host cmd` or an interactive login
+    # followed by running the script manually -> stdin is a tty.
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        echo "This needs a real terminal (pty), not a piped/non-interactive session." >&2
+        echo "Log in normally first (ssh <host>), then run this script from that shell —" >&2
+        echo "or if your SSH client runs this as a startup command, enable its" >&2
+        echo "'force pseudo-terminal' / 'allocate TTY' option for that command." >&2
+        exit 1
+    fi
     tui_enter
-    local k
     while true; do
         draw_menu
-        k="$(read_key)"
-        case "$k" in
+        read_key
+        case "$KEY" in
             UP)   sel=$(( (sel - 1 + ${#LABELS[@]}) % ${#LABELS[@]} )) ;;
             DOWN) sel=$(( (sel + 1) % ${#LABELS[@]} )) ;;
-            1|2|3|4|5|6|7|8|9) sel=$((k - 1)) ;;
+            1|2|3|4|5|6|7|8|9) sel=$((KEY - 1)) ;;
             ENTER)
                 printf '\033[H\033[J'
                 case "$sel" in
@@ -377,7 +410,7 @@ main() {
                 esac
                 echo
                 printf '  %spress any key to return%s' "$MUTED" "$R"
-                read_key >/dev/null
+                read_key
                 ;;
             QUIT) break ;;
         esac
