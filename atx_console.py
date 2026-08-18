@@ -20,6 +20,8 @@ from typing import TextIO
 
 DEFAULT_ATXPOWER = "/usr/sbin/atxpower"
 DEFAULT_DEVICE = "/dev/ttyACM0"
+MENU_LABEL_WIDTH = 16
+MENU_WIDTH = 72  # badges right-align here regardless of hint length
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class ConsoleUI:
         color = self.is_tty and term.lower() != "dumb" and "NO_COLOR" not in os.environ
         self.palette = Palette(color)
         self.animate = self.is_tty and os.environ.get("ATX_NO_ANIMATION") is None
+        self._gradient_tables: dict[int, tuple[str, ...]] = {}
 
     def write(self, text: str = "", *, flush: bool = False) -> None:
         self.output.write(text)
@@ -119,17 +122,34 @@ class ConsoleUI:
         if self.is_tty and os.environ.get("TERM", "").lower() != "dumb":
             self.write("\x1b[2J\x1b[H")
 
-    def _gradient(self, offset: int, width: int) -> str:
-        t = offset / max(width, 1)
-        red = round(242 + (5 - 242) * t)
-        green = round(34 + (217 - 34) * t)
-        blue = round(255 + (232 - 255) * t)
-        return self.palette.rgb(red, green, blue)
+    def _gradient(self, width: int) -> tuple[str, ...]:
+        """Magenta->cyan color table for `width` cells, cached per width.
+
+        Used by both rule() (every menu redraw) and progress() (every
+        animation frame); the RGB math only depends on (index, width,
+        palette.enabled) — all fixed once an instance exists — so
+        computing it once and reusing avoids O(frames * width) redundant
+        interpolation.
+        """
+        width = max(width, 0)
+        table = self._gradient_tables.get(width)
+        if table is None:
+            denom = max(width, 1)
+            colors = []
+            for offset in range(width):
+                t = offset / denom
+                red = round(242 + (5 - 242) * t)
+                green = round(34 + (217 - 34) * t)
+                blue = round(255 + (232 - 255) * t)
+                colors.append(self.palette.rgb(red, green, blue))
+            table = tuple(colors)
+            self._gradient_tables[width] = table
+        return table
 
     def rule(self, width: int = 50) -> None:
         if self.palette.enabled:
-            rule = "".join(f"{self._gradient(i, width)}─" for i in range(width))
-            self.line(f"  {rule}{self.palette.reset}")
+            body = "".join(f"{color}─" for color in self._gradient(width))
+            self.line(f"  {body}{self.palette.reset}")
         else:
             self.line("  " + "-" * width)
 
@@ -142,18 +162,17 @@ class ConsoleUI:
             return
 
         width = 30
+        gradient = self._gradient(width)
         started = time.monotonic()
         try:
             while True:
                 elapsed = min(time.monotonic() - started, seconds)
                 fraction = elapsed / seconds
                 filled = round(width * fraction)
-                blocks = []
-                for index in range(width):
-                    if index < filled:
-                        blocks.append(f"{self._gradient(index, width)}█")
-                    else:
-                        blocks.append(f"{p.muted}░")
+                blocks = [
+                    f"{gradient[i]}█" if i < filled else f"{p.muted}░"
+                    for i in range(width)
+                ]
                 percent = round(fraction * 100)
                 frame = "".join(blocks)
                 self.write(
@@ -209,6 +228,44 @@ class Settings:
 class CommandResult:
     returncode: int
     output: str
+
+
+@dataclass(frozen=True)
+class MenuItem:
+    """One menu row. Drives both the printed menu and the dispatch table,
+    so adding/editing an action means editing MENU_ITEMS once instead of
+    keeping a hand-formatted menu() string and a separate dispatch dict
+    in sync by hand."""
+
+    key: str
+    label: str
+    hint: str
+    section: str
+    badge: str
+    badge_color: str  # Palette attribute name, e.g. "cyan"
+    handler: str  # ATXConsole method name
+
+
+MENU_ITEMS: tuple[MenuItem, ...] = (
+    MenuItem("1", "status", "read power_state (on / off / sleep)",
+             "POWER", "READ", "cyan", "show_status"),
+    MenuItem("2", "power on", "graceful start if off",
+             "POWER", "START", "cyan", "do_on"),
+    MenuItem("3", "power off", "ACPI / short press — preferred off",
+             "POWER", "ACPI", "cyan", "do_off"),
+    MenuItem("4", "power off HARD", "long press — last resort",
+             "POWER", "DANGER", "red", "do_off_hard"),
+    MenuItem("5", "reset", "reset header — hard reboot",
+             "POWER", "HARD", "yellow", "do_reset"),
+    MenuItem("6", "raw short click", "no on/off check",
+             "RAW / INFO", "RAW", "cyan", "do_click_short"),
+    MenuItem("7", "raw long click", "no on/off check",
+             "RAW / INFO", "RAW-HOLD", "red", "do_click_long"),
+    MenuItem("8", "raw reset click", "no on/off check",
+             "RAW / INFO", "RAW", "cyan", "do_click_reset"),
+    MenuItem("9", "board serial", "get_sn",
+             "RAW / INFO", "READ", "cyan", "do_serial"),
+)
 
 
 class ATXConsole:
@@ -491,37 +548,33 @@ class ATXConsole:
     def menu(self) -> str | None:
         p = self.ui.palette
         self.ui.rule()
-        self.ui.line(
-            f"  {p.pink}{p.bold}‹1›{p.reset}  status           "
-            f"{p.muted}read power_state (on / off / sleep){p.reset}"
-        )
-        self.ui.line(
-            f"  {p.cyan}{p.bold}‹2›{p.reset}  power on         "
-            f"{p.muted}graceful start if off{p.reset}"
-        )
-        self.ui.line(
-            f"  {p.cyan}{p.bold}‹3›{p.reset}  power off        "
-            f"{p.muted}ACPI / short press — preferred off{p.reset}"
-        )
-        self.ui.line(
-            f"  {p.cyan}{p.bold}‹4›{p.reset}  power off HARD   "
-            f"{p.muted}long press — last resort{p.reset}"
-        )
-        self.ui.line(
-            f"  {p.cyan}{p.bold}‹5›{p.reset}  reset            "
-            f"{p.muted}reset header — hard reboot{p.reset}"
-        )
+        section = None
+        section_color = p.pink
+        for item in MENU_ITEMS:
+            if item.section != section:
+                section = item.section
+                # Color now marks section (POWER vs RAW/INFO), not
+                # per-item risk — the [BADGE] text already carries the
+                # read-only-vs-actionable distinction explicitly and
+                # more clearly than a color-only cue did before badges
+                # existed. Computed once so the heading and its items
+                # can't drift out of sync with each other.
+                section_color = p.pink if section == "POWER" else p.purple
+                self.ui.line(f"  {section_color}{p.bold}{section}{p.reset}")
+            badge_color = getattr(p, item.badge_color)
+            badge_text = f"[{item.badge}]"
+            # Right-align the badge to a consistent column regardless of
+            # hint length, rather than a fixed-width hint field that
+            # would misalign or truncate if a hint ever grows. +2 for
+            # the leading indent printed before the "‹N›" below.
+            prefix_len = 2 + 3 + 2 + MENU_LABEL_WIDTH + len(item.hint)
+            spacing = " " * max(2, MENU_WIDTH - prefix_len - len(badge_text))
+            self.ui.line(
+                f"  {section_color}{p.bold}‹{item.key}›{p.reset}  "
+                f"{item.label:<{MENU_LABEL_WIDTH}}{p.muted}{item.hint}{p.reset}"
+                f"{spacing}{badge_color}{p.bold}{badge_text}{p.reset}"
+            )
         self.ui.rule()
-        self.ui.line(
-            f"  {p.purple}{p.bold}‹6›{p.reset}  raw short click  "
-            f"{p.muted}no on/off check{p.reset}"
-        )
-        self.ui.line(f"  {p.purple}{p.bold}‹7›{p.reset}  raw long click")
-        self.ui.line(f"  {p.purple}{p.bold}‹8›{p.reset}  raw reset click")
-        self.ui.line(
-            f"  {p.pink}{p.bold}‹9›{p.reset}  board serial     "
-            f"{p.muted}get_sn{p.reset}"
-        )
         self.ui.line(f"  {p.muted}{p.bold}‹q›{p.reset}  quit")
         self.ui.rule()
         return self.ui.ask(f"  {p.magenta}{p.bold}❯{p.reset} {p.white}choose{p.reset} ")
@@ -536,17 +589,7 @@ class ATXConsole:
         self.ui.line()
 
     def run(self) -> int:
-        actions = {
-            "1": self.show_status,
-            "2": self.do_on,
-            "3": self.do_off,
-            "4": self.do_off_hard,
-            "5": self.do_reset,
-            "6": self.do_click_short,
-            "7": self.do_click_long,
-            "8": self.do_click_reset,
-            "9": self.do_serial,
-        }
+        actions = {item.key: getattr(self, item.handler) for item in MENU_ITEMS}
         while True:
             self.banner()
             if not self.need_board():
