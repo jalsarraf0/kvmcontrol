@@ -7,15 +7,32 @@ buttons remotely.
 
 ## Contents
 
-- `atx-console.sh` — menu-driven console for `/usr/sbin/atxpower` (talks
-  to the GL-ATXPC board over `/dev/ttyACM0` on the appliance). Simulates
-  the attached PC's physical power/reset buttons: status read, graceful
-  power on/off, hard power off, reset, plus raw short/long/reset clicks
-  and board serial lookup. Does **not** power off the KVM appliance
-  itself. Synthwave-themed with 24-bit ANSI truecolor gradient bars and
-  rules — needs a truecolor-capable terminal (most modern emulators; SSH
-  clients that clamp to 256-color will render it flatter but still
-  legible).
+Two equivalent implementations, same interaction model (numbered menu,
+type a number, press Enter — no arrow keys, no raw terminal mode), same
+safety confirmations, same `atxpower` commands. Pick whichever fits;
+neither depends on the other.
+
+- `atx-console.sh` — bash + ANSI escapes, no dependencies beyond a
+  shell that supports 24-bit color.
+- `atx_console.py` — Python 3 stdlib only (no pip packages). Colors
+  auto-disable when output isn't a real terminal (piped, redirected to
+  a file, `NO_COLOR` set, or `TERM=dumb`) instead of leaking raw escape
+  codes.
+
+Both: talk to `/usr/sbin/atxpower` over `/dev/ttyACM0` on the appliance.
+Simulate the attached PC's physical power/reset buttons: status read,
+graceful power on/off, hard power off, reset, plus raw short/long/reset
+clicks and board serial lookup. Do **not** power off the KVM appliance
+itself. Synthwave-themed with 24-bit ANSI truecolor gradient bars and
+rules — needs a truecolor-capable terminal (most modern emulators; SSH
+clients that clamp to 256-color will render it flatter but still
+legible).
+
+Deliberately not a full-screen arrow-key TUI: raw terminal mode requires
+a real pty, which `ssh host command` doesn't allocate unless `-t` is
+passed — a prior attempt at that broke unpredictably depending on the
+SSH client used to connect. Plain line-buffered input works the same
+either way, so that whole class of bug doesn't apply here.
 
 ## Requirements
 
@@ -24,21 +41,30 @@ buttons remotely.
   board's LED and still fail to enumerate).
 - `atxpower` present at `/usr/sbin/atxpower` on the appliance (ships with
   the GL.iNet firmware for this board).
-- A shell on the appliance that supports `bash` and 24-bit color escapes.
+- For `atx-console.sh`: a shell that supports `bash` and 24-bit color
+  escapes. For `atx_console.py`: Python 3 (3.8+; developed against 3.12).
 
 ## Deploying
 
 The appliance is a minimal embedded box, not a general git host — it
-doesn't pull this repo directly. Copy the script over instead, keeping a
-`.bak` of whatever was there before:
+doesn't pull this repo directly. Copy the script(s) over instead, keeping
+a `.bak` of whatever was there before:
 
 ```sh
 ssh <your-kvm-host> 'cp -p /path/to/atx-console.sh /path/to/atx-console.sh.bak'
 scp -p atx-console.sh <your-kvm-host>:/path/to/atx-console.sh
 ssh <your-kvm-host> 'chmod 755 /path/to/atx-console.sh'
+
+scp -p atx_console.py <your-kvm-host>:/path/to/atx_console.py
+ssh <your-kvm-host> 'chmod 755 /path/to/atx_console.py'
 ```
 
-Then run it over SSH: `ssh <your-kvm-host> /path/to/atx-console.sh`.
+Then run either over SSH:
+
+```sh
+ssh <your-kvm-host> /path/to/atx-console.sh
+ssh <your-kvm-host> python3 /path/to/atx_console.py
+```
 
 ### Optional: label the attached PC
 
