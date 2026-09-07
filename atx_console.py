@@ -96,7 +96,7 @@ class Palette:
 
 
 class ConsoleUI:
-    """Line-oriented terminal presentation; no raw mode or cursor input."""
+    """Terminal presentation. Arrow keys when stdin and stdout are a TTY."""
 
     def __init__(self, input_stream: TextIO, output_stream: TextIO) -> None:
         self.input = input_stream
@@ -108,11 +108,18 @@ class ConsoleUI:
             from automation.terminal_design import load
             preferences = load()
         except ImportError:
-            preferences = {"theme": "synthwave", "compact": False, "animations": True}
+            preferences = {"theme": "synthwave", "compact": False, "animations": True, "quick": False}
         self.theme = os.environ.get("ATX_THEME", preferences["theme"])
         self.compact = os.environ.get("ATX_COMPACT") == "1" or preferences["compact"]
+        self.quick = os.environ.get("ATX_QUICK") == "1" or preferences.get("quick") is True
+        self.animations = preferences.get("animations", True) is True
         self.palette = Palette(color, self.theme)
-        self.animate = color and preferences["animations"] and os.environ.get("ATX_NO_ANIMATION") is None
+        self.animate = (
+            color
+            and self.animations
+            and os.environ.get("ATX_NO_ANIMATION") is None
+            and not self.quick
+        )
         self._entered = False
         self._gradient_tables: dict[int, tuple[str, ...]] = {}
 
@@ -179,7 +186,7 @@ class ConsoleUI:
         p = self.palette
         self.line()
         self.line(f"  {p.muted}{label}{p.reset}")
-        if not self.animate or seconds <= 0:
+        if not self.animate or self.quick or seconds <= 0:
             return
 
         width = 30
@@ -320,6 +327,7 @@ class ATXConsole:
         self.target_label = settings.target_label or settings.host
         self.remote_target = False
         self.snapshot = None
+        self.menu_index = 0
 
     def request(self, path="/scheduler", body=None):
         if self.target_id is None:
@@ -328,16 +336,17 @@ class ATXConsole:
         from automation.fleet import call
         return call(self.target_id, path, body)
 
-    def banner(self) -> None:
+    def banner(self, *, fetch: bool = True) -> None:
         try:
             from automation.terminal_design import header, entrance
             if not self.ui._entered:
                 entrance(self.ui)
                 self.ui._entered = True
-            try:
-                self.snapshot = self.request()
-            except Exception:
-                self.snapshot = None
+            if fetch:
+                try:
+                    self.snapshot = self.request()
+                except Exception:
+                    self.snapshot = None
             header(self, self.snapshot)
         except ImportError:
             self.ui.line("GLKVM / " + self.target_label)
@@ -433,12 +442,16 @@ class ATXConsole:
     def confirm(self, prompt: str) -> bool:
         p = self.ui.palette
         self.ui.line(f"  {p.cyan}TARGET: {self.target_label}{p.reset}")
-        answer = self.ui.ask(f"  {p.yellow}{prompt}{p.reset}  [y/N] ")
-        if answer in {"y", "Y", "yes", "YES"}:
-            return True
-        suffix = " (input closed)" if answer is None else ""
-        self.ui.line(f"  {p.muted}cancelled{suffix}{p.reset}")
-        return False
+        try:
+            from automation.tui_nav import confirm as choose
+            return choose(self.ui, prompt)
+        except ImportError:
+            answer = self.ui.ask(f"  {p.yellow}{prompt}{p.reset}  [y/N] ")
+            if answer in {"y", "Y", "yes", "YES"}:
+                return True
+            suffix = " (input closed)" if answer is None else ""
+            self.ui.line(f"  {p.muted}cancelled{suffix}{p.reset}")
+            return False
 
     def run_atx(self, command: str, wait_seconds: int, title: str) -> None:
         p = self.ui.palette
@@ -596,8 +609,12 @@ class ATXConsole:
         return menu(self, items, extras)
 
     def pause(self) -> bool:
-        p = self.ui.palette
-        return self.ui.ask(f"  {p.muted}enter to return to menu{p.reset} ") is not None
+        try:
+            from automation.tui_nav import wait_for_key
+            return wait_for_key(self.ui)
+        except Exception:
+            p = self.ui.palette
+            return self.ui.ask(f"  {p.muted}enter to return to menu{p.reset} ") is not None
 
     def goodbye(self, reason: str = "bye") -> None:
         p = self.ui.palette
@@ -618,18 +635,38 @@ class ATXConsole:
                             "v": "watch", "b": "backup", "i": "restore", "s": "settings", "t": "appearance", "/": "search"}.items():
             actions[key] = lambda action=action: extra(action)
         while True:
-            self.banner()
-            if not self.remote_target and not self.need_board():
-                self.ui.warn(
-                    "actions that talk to the board will fail until it enumerates"
-                )
-            self.ui.line()
+            try:
+                self.snapshot = self.request()
+            except Exception:
+                self.snapshot = None
+            try:
+                from automation.tui_nav import interactive
+                tty_menu = interactive(self.ui)
+            except ImportError:
+                tty_menu = False
+            if not tty_menu:
+                self.banner(fetch=False)
+                if not self.remote_target and not self.need_board():
+                    self.ui.warn(
+                        "actions that talk to the board will fail until it enumerates"
+                    )
+                self.ui.line()
             choice = self.menu()
             if choice is None:
                 self.goodbye("input closed — bye")
                 return 0
             self.ui.line()
             normalized = choice.strip().lower()
+            if normalized in {"tab", "j"}:
+                self.ui.quick = not self.ui.quick
+                self.ui.animate = (
+                    self.ui.palette.enabled
+                    and self.ui.animations
+                    and os.environ.get("ATX_NO_ANIMATION") is None
+                    and not self.ui.quick
+                )
+                self.menu_index = 0
+                continue
             if normalized in {"q", "0", "quit", "exit"}:
                 self.goodbye()
                 return 0

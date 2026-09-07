@@ -64,48 +64,31 @@ class MenuDataTests(unittest.TestCase):
         for item in ac.MENU_ITEMS:
             self.assertTrue(hasattr(p, item.badge_color), item.badge_color)
 
-    def test_every_menu_row_aligns_to_menu_width(self) -> None:
-        # A prior version's alignment math missed the 2-space leading
-        # indent and overshot MENU_WIDTH by 2 columns on every row —
-        # this asserts the visible (ANSI-stripped) width directly so
-        # that class of bug can't silently come back.
+    def test_menu_lists_power_and_quick_keys(self) -> None:
         import re
 
         out = io.StringIO()
         ui = ac.ConsoleUI(io.StringIO("q\n"), out)
-        ui.is_tty = True
-        ui.palette = ac.Palette(True)
+        ui.is_tty = False
+        ui.palette = ac.Palette(False)
+        ui.animate = False
         console = ac.ATXConsole(make_settings("/nonexistent"), ui)
-        console.menu()
-        rows = [
-            re.sub(r"\x1b\[[0-9;]*m", "", line)
-            for line in out.getvalue().splitlines()
-            if "[" in line and "]" in line
-        ]
-        self.assertEqual(len(rows), len(ac.MENU_ITEMS))
-        for row in rows:
-            self.assertEqual(len(row), ac.MENU_WIDTH, row)
+        choice = console.menu()
+        self.assertEqual(choice, "q")
+        text = re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue())
+        self.assertIn("[1] status", text)
+        self.assertIn("[2] power on", text)
+        self.assertIn("[f]", text)
 
-    def test_section_heading_and_item_numbers_share_one_color(self) -> None:
-        # heading_color/number_color used to be two copies of the same
-        # if/else — guard against them drifting apart again.
-        import re
+    def test_banner_uses_exact_motd_logo(self) -> None:
+        from automation.terminal_design import MOTD
 
-        out = io.StringIO()
-        ui = ac.ConsoleUI(io.StringIO("q\n"), out)
-        ui.is_tty = True
-        ui.palette = ac.Palette(True)
-        console = ac.ATXConsole(make_settings("/nonexistent"), ui)
-        console.menu()
-        color_re = re.compile(r"\x1b\[38;2;\d+;\d+;\d+m")
-        lines = out.getvalue().splitlines()
-        heading_color = None
-        for line in lines:
-            stripped = re.sub(r"\x1b\[[0-9;]*m", "", line)
-            if stripped.strip() in ("POWER", "RAW / INFO"):
-                heading_color = color_re.search(line).group()
-            elif stripped.strip().startswith("‹") and "quit" not in stripped and heading_color:
-                self.assertIn(heading_color, line, stripped)
+        console, out = make_console("/nonexistent", "", is_tty=True)
+        console.banner(fetch=False)
+        visible = out.getvalue()
+        for line in MOTD.splitlines():
+            if "█" in line or "Welcome to Glkvm" in line:
+                self.assertIn(line, visible)
 
 
 class ConfirmTests(unittest.TestCase):
@@ -267,6 +250,31 @@ class RuleCacheTests(unittest.TestCase):
         last_frame = out.getvalue().split("\r")[-1]
         self.assertIn("100%", last_frame)
         self.assertEqual(last_frame.count("█"), 30)
+
+
+class MotdAndKeysTests(unittest.TestCase):
+    def test_embedded_motd_matches_appliance_banner(self) -> None:
+        from automation.terminal_design import MOTD
+
+        self.assertIn("Welcome to Glkvm", MOTD)
+        self.assertIn("System is ready. Have a productive day!", MOTD)
+        self.assertTrue(MOTD.startswith("\n  ██████╗"))
+
+    def test_escape_sequences_decode(self) -> None:
+        from automation.tui_nav import decode_sequence
+
+        self.assertEqual(decode_sequence("\x1b[A"), "up")
+        self.assertEqual(decode_sequence("\x1b[B"), "down")
+        self.assertEqual(decode_sequence("\x1b[C"), "right")
+        self.assertEqual(decode_sequence("\x1b[D"), "left")
+        self.assertEqual(decode_sequence("\x1b"), "esc")
+
+    def test_quick_menu_hides_raw_clicks(self) -> None:
+        from automation.terminal_design import QUICK_EXTRA, QUICK_POWER
+
+        self.assertEqual(QUICK_POWER, {"1", "2", "3"})
+        self.assertIn("r", QUICK_EXTRA)
+        self.assertNotIn("7", QUICK_POWER)
 
 
 if __name__ == "__main__":

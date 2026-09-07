@@ -385,16 +385,19 @@ class ConsoleTools:
         self.ui.line("  Themes: synthwave / aurora / ember / ice")
         theme = self.ui.ask(f"  Theme [{current['theme']}]: ") or current["theme"]
         compact = (self.ui.ask(f"  Compact mode y/N [{'y' if current['compact'] else 'N'}]: ") or ("y" if current["compact"] else "n")).lower().startswith("y")
+        quick = (self.ui.ask(f"  Quick menu y/N [{'y' if current.get('quick') else 'N'}]: ") or ("y" if current.get("quick") else "n")).lower().startswith("y")
         animations = (self.ui.ask(f"  Animations Y/n [{'Y' if current['animations'] else 'n'}]: ") or ("y" if current["animations"] else "n")).lower().startswith("y")
-        value = {"theme": theme, "compact": compact, "animations": animations}
+        value = {"theme": theme, "compact": compact, "animations": animations, "quick": quick}
         if value["theme"] not in terminal_design.THEMES:
             raise ValueError("Unknown theme")
         terminal_design.save(value)
         self.ui.theme = value["theme"]
         self.ui.compact = value["compact"]
+        self.ui.quick = value["quick"]
+        self.ui.animations = value["animations"]
         from atx_console import Palette
         self.ui.palette = Palette(self.ui.palette.enabled, value["theme"])
-        self.ui.animate = self.ui.palette.enabled and value["animations"] and os.environ.get("ATX_NO_ANIMATION") is None
+        self.ui.animate = self.ui.palette.enabled and value["animations"] and os.environ.get("ATX_NO_ANIMATION") is None and not value["quick"]
         self.ui._gradient_tables.clear()
         self.ui.ok("Appearance saved for this console")
 

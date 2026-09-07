@@ -30,8 +30,10 @@ Scheduling starts **paused**. Feature tests remain deferred. See
 
 The Python console is the primary interface. The shell entry point launches
 it when installed alongside it, and retains its original shell-only mode
-as a fallback (`ATX_SHELL_LEGACY=1`). Both use line-buffered input and
-explicit confirmations; no raw terminal mode is required.
+as a fallback (`ATX_SHELL_LEGACY=1`). Over a real TTY it uses arrow keys
+(↑↓ move, ←→ jump sections, Enter select, Tab quick menu). Typed keys still
+work. Without a TTY it stays line-buffered. Use `ssh -t` so the appliance
+gets a pty.
 
 - `atx-console.sh` — bash + ANSI escapes, no dependencies beyond a
   shell that supports 24-bit color.
@@ -49,11 +51,11 @@ rules — needs a truecolor-capable terminal (most modern emulators; SSH
 clients that clamp to 256-color will render it flatter but still
 legible).
 
-Deliberately not a full-screen arrow-key TUI: raw terminal mode requires
-a real pty, which `ssh host command` doesn't allocate unless `-t` is
-passed — a prior attempt at that broke unpredictably depending on the
-SSH client used to connect. Plain line-buffered input works the same
-either way, so that whole class of bug doesn't apply here.
+The header logo is the appliance `/etc/motd` GLKVM banner, byte-for-byte.
+Quick mode (`Tab`, `j`, or `ATX_QUICK=1`) keeps status / on / off /
+recovery / fleet and hides raw clicks. Arrow navigation needs a pty; if
+`ssh host command` has no TTY the console prints a typed-key prompt
+instead of hanging.
 
 ## Requirements
 

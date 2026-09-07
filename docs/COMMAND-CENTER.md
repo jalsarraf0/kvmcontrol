@@ -5,7 +5,10 @@
 The upgraded Python console keeps the original numbered ATX controls and
 adds an operations section. `atx-console.sh` launches the Python interface
 when the adjacent Python file exists; `ATX_SHELL_LEGACY=1` selects the old
-shell-only implementation. No raw terminal mode or arrow keys are needed.
+shell-only implementation. The header is the exact Comet `/etc/motd`
+GLKVM logo. On a TTY, move with arrow keys, jump sections with ←→, select
+with Enter, toggle quick mode with Tab or `j`, and confirm with ←→ / y / n
+(default NO). Typed keys still work. `ssh -t user@kvm python3 /usr/share/kvmcontrol/atx_console.py` if your client does not allocate a pty. `ATX_LINE_MENU=1` forces the typed prompt.
 
 | Key | Operation |
 | --- | --- |
