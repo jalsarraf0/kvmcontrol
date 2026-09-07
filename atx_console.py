@@ -182,7 +182,7 @@ class ConsoleUI:
             self.line("  " + "-" * width)
 
     def progress(self, label: str, seconds: float) -> None:
-        """Render a cheap in-process animation, or a plain note when redirected."""
+        """One synthwave bar on a single line. Never stacks a second bar."""
         p = self.palette
         self.line()
         self.line(f"  {p.muted}{label}{p.reset}")
@@ -190,28 +190,27 @@ class ConsoleUI:
             return
 
         width = 30
-        gradient = self._gradient(width)
+        self.write("\x1b[?25l")
         started = time.monotonic()
         try:
             while True:
                 elapsed = min(time.monotonic() - started, seconds)
-                fraction = elapsed / seconds
-                filled = round(width * fraction)
-                blocks = [
-                    f"{gradient[i]}█" if i < filled else f"{p.muted}░"
-                    for i in range(width)
-                ]
+                fraction = elapsed / seconds if seconds else 1.0
+                filled = min(width, int(width * fraction + 0.5))
+                bar = f"{p.cyan}{'█' * filled}{p.muted}{'░' * (width - filled)}"
                 percent = round(fraction * 100)
-                frame = "".join(blocks)
+                # Erase the whole line, then home the cursor — a bare \r wraps
+                # after the TUI's Unicode/ANSI and looks like a second bar.
                 self.write(
-                    f"\r  {p.purple}▐{p.reset}{frame}{p.reset}"
-                    f"{p.purple}▌{p.reset} {p.white}{percent:3d}%{p.reset}  ",
+                    f"\r\x1b[2K\x1b[G  {p.magenta}▐{p.reset}{bar}{p.reset}"
+                    f"{p.magenta}▌{p.reset} {p.white}{percent:3d}%{p.reset}",
                     flush=True,
                 )
                 if elapsed >= seconds:
                     break
-                time.sleep(min(0.1, seconds - elapsed))
+                time.sleep(min(0.08, seconds - elapsed))
         finally:
+            self.write("\x1b[?25h")
             self.line(p.reset)
 
     def ok(self, message: str) -> None:
