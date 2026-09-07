@@ -25,3 +25,27 @@ def request(path="/scheduler", body=None):
         return data["result"]
     finally:
         connection.close()
+
+
+def main():
+    import sys
+    try:
+        envelope = json.loads(sys.stdin.read(131073))
+        path = envelope.get('path', '/scheduler')
+        from automation.fleet import ALLOWED_PATHS
+        if path not in ALLOWED_PATHS:
+            raise ValueError('Unsupported fleet operation')
+        result = request(path, envelope.get('body'))
+        print(json.dumps({'ok': True, 'result': result}))
+    except Exception as error:
+        print(json.dumps({'ok': False, 'result': {'error_msg': str(error)}}))
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    import sys
+    # The file may be invoked directly over SSH, with no package installation.
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    raise SystemExit(main())

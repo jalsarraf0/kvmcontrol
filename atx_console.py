@@ -31,6 +31,7 @@ class Palette:
     """Synthwave colors, disabled automatically when output is not a TTY."""
 
     enabled: bool
+    theme: str = "synthwave"
 
     @property
     def reset(self) -> str:
@@ -55,7 +56,9 @@ class Palette:
 
     @property
     def magenta(self) -> str:
-        return self.rgb(242, 34, 255)
+        return self.rgb(*{
+            "aurora": (105,153,255), "ember": (255,77,109), "ice": (185,180,255),
+        }.get(self.theme, (242,34,255)))
 
     @property
     def purple(self) -> str:
@@ -63,7 +66,9 @@ class Palette:
 
     @property
     def cyan(self) -> str:
-        return self.rgb(5, 217, 232)
+        return self.rgb(*{
+            "aurora": (117,243,196), "ember": (255,181,97), "ice": (147,219,255),
+        }.get(self.theme, (5,217,232)))
 
     @property
     def orange(self) -> str:
@@ -99,8 +104,16 @@ class ConsoleUI:
         self.is_tty = bool(getattr(output_stream, "isatty", lambda: False)())
         term = os.environ.get("TERM", "")
         color = self.is_tty and term.lower() != "dumb" and "NO_COLOR" not in os.environ
-        self.palette = Palette(color)
-        self.animate = self.is_tty and os.environ.get("ATX_NO_ANIMATION") is None
+        try:
+            from automation.terminal_design import load
+            preferences = load()
+        except ImportError:
+            preferences = {"theme": "synthwave", "compact": False, "animations": True}
+        self.theme = os.environ.get("ATX_THEME", preferences["theme"])
+        self.compact = os.environ.get("ATX_COMPACT") == "1" or preferences["compact"]
+        self.palette = Palette(color, self.theme)
+        self.animate = color and preferences["animations"] and os.environ.get("ATX_NO_ANIMATION") is None
+        self._entered = False
         self._gradient_tables: dict[int, tuple[str, ...]] = {}
 
     def write(self, text: str = "", *, flush: bool = False) -> None:
@@ -270,44 +283,56 @@ MENU_ITEMS: tuple[MenuItem, ...] = (
 )
 
 
+EXTRA_ITEMS = (
+    ("f", "fleet / switch target", "Both KVMs, one command deck", "FLEET & WORKFLOWS", "FLEET"),
+    ("r", "guided recovery", "Shutdown → confirm off → start", "FLEET & WORKFLOWS", "GUIDED"),
+    ("v", "watch transitions", "Live phase and countdown display", "FLEET & WORKFLOWS", "LIVE"),
+    ("c", "cancel workflow", "Stop remaining recovery steps", "FLEET & WORKFLOWS", "STOP"),
+    ("a", "add schedule", "Calendar, weekdays, weekends, timers", "AUTOMATION", "TIMER"),
+    ("l", "manage queue", "Pause / resume / snooze / skip", "AUTOMATION", "QUEUE"),
+    ("m", "maintenance presets", "Save and reuse operation templates", "AUTOMATION", "PRESET"),
+    ("p", "PAUSE ALL", "Pause schedules and cancel workflow", "AUTOMATION", "STOP"),
+    ("e", "enable scheduling", "Review and arm this target", "AUTOMATION", "ARM"),
+    ("h", "activity history", "Confirmed states and outcomes", "OPERATIONS", "LOG"),
+    ("w", "Wake-on-LAN", "Wake a configured LAN adapter", "OPERATIONS", "WAKE"),
+    ("d", "diagnostics", "Inventory and clock information", "OPERATIONS", "READ"),
+    ("n", "notebook", "Append local recovery notes", "OPERATIONS", "NOTES"),
+    ("s", "settings & alerts", "Timing and optional HTTPS webhook", "OPERATIONS", "CONFIG"),
+    ("b", "backup", "Export schedules, presets, settings", "OPERATIONS", "SAVE"),
+    ("i", "restore backup", "Preview → confirm → import paused", "OPERATIONS", "RESTORE"),
+    ("x", "export activity", "Save a JSON audit snapshot", "OPERATIONS", "EXPORT"),
+)
+
+
 class ATXConsole:
     def __init__(self, settings: Settings, ui: ConsoleUI) -> None:
         self.settings = settings
         self.ui = ui
+        self.target_id = None
+        self.target_label = settings.target_label or settings.host
+        self.remote_target = False
+        self.snapshot = None
+
+    def request(self, path="/scheduler", body=None):
+        if self.target_id is None:
+            from automation.client import request
+            return request(path, body)
+        from automation.fleet import call
+        return call(self.target_id, path, body)
 
     def banner(self) -> None:
-        p = self.ui.palette
-        self.ui.clear()
-        self.ui.line()
-        logo = (
-            (p.yellow, "  ██████╗ ██╗     ██╗  ██╗██╗   ██╗███╗   ███╗"),
-            (p.orange, " ██╔════╝ ██║     ██║ ██╔╝██║   ██║████╗ ████║"),
-            (p.pink, " ██║  ███╗██║     █████╔╝ ██║   ██║██╔████╔██║"),
-            (p.magenta, " ██║   ██║██║     ██╔═██╗ ╚██╗ ██╔╝██║╚██╔╝██║"),
-            (p.purple, " ╚██████╔╝███████╗██║  ██╗ ╚████╔╝ ██║ ╚═╝ ██║"),
-            (p.cyan, "  ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚═╝"),
-        )
-        if shutil.get_terminal_size((80, 24)).columns < 58:
-            self.ui.line(f"  {p.cyan}{p.bold}GLKVM / COMMAND CENTER{p.reset}")
-        else:
-            for color, text in logo:
-                self.ui.line(f"{color}{text}{p.reset}")
-        self.ui.line()
-        self.ui.line(f"                    {p.muted}{p.italic}COMMAND CENTER / POWER + AUTOMATION{p.reset}")
-        self.ui.line()
-        self.ui.rule()
-        self.ui.line(f"  {p.muted}host{p.reset}    {p.white}{p.bold}{self.settings.host}{p.reset}")
-        if self.settings.target_label:
-            self.ui.line(
-                f"  {p.muted}target{p.reset}  "
-                f"{p.white}{self.settings.target_label}{p.reset}"
-            )
-        self.ui.line(
-            f"  {p.muted}{p.italic}"
-            "This KVM presses the attached PC's power/reset wires."
-            f"{p.reset}"
-        )
-        self.ui.line()
+        try:
+            from automation.terminal_design import header, entrance
+            if not self.ui._entered:
+                entrance(self.ui)
+                self.ui._entered = True
+            try:
+                self.snapshot = self.request()
+            except Exception:
+                self.snapshot = None
+            header(self, self.snapshot)
+        except ImportError:
+            self.ui.line("GLKVM / " + self.target_label)
 
     def board_present(self) -> bool:
         return os.path.exists(self.settings.device)
@@ -399,6 +424,7 @@ class ATXConsole:
 
     def confirm(self, prompt: str) -> bool:
         p = self.ui.palette
+        self.ui.line(f"  {p.cyan}TARGET: {self.target_label}{p.reset}")
         answer = self.ui.ask(f"  {p.yellow}{prompt}{p.reset}  [y/N] ")
         if answer in {"y", "Y", "yes", "YES"}:
             return True
@@ -556,49 +582,10 @@ class ATXConsole:
             self.ui.error(f"atxpower exited {result.returncode}")
 
     def menu(self) -> str | None:
-        p = self.ui.palette
-        self.ui.rule()
-        section = None
-        section_color = p.pink
-        for item in MENU_ITEMS:
-            if item.section != section:
-                section = item.section
-                # Color now marks section (POWER vs RAW/INFO), not
-                # per-item risk — the [BADGE] text already carries the
-                # read-only-vs-actionable distinction explicitly and
-                # more clearly than a color-only cue did before badges
-                # existed. Computed once so the heading and its items
-                # can't drift out of sync with each other.
-                section_color = p.pink if section == "POWER" else p.purple
-                self.ui.line(f"  {section_color}{p.bold}{section}{p.reset}")
-            badge_color = getattr(p, item.badge_color)
-            badge_text = f"[{item.badge}]"
-            # Right-align the badge to a consistent column regardless of
-            # hint length, rather than a fixed-width hint field that
-            # would misalign or truncate if a hint ever grows. +2 for
-            # the leading indent printed before the "‹N›" below.
-            prefix_len = 2 + len(item.key) + 2 + 2 + MENU_LABEL_WIDTH + len(item.hint)
-            spacing = " " * max(2, MENU_WIDTH - prefix_len - len(badge_text))
-            self.ui.line(
-                f"  {section_color}{p.bold}‹{item.key}›{p.reset}  "
-                f"{item.label:<{MENU_LABEL_WIDTH}}{p.muted}{item.hint}{p.reset}"
-                f"{spacing}{badge_color}{p.bold}{badge_text}{p.reset}"
-            )
-        self.ui.rule()
-        self.ui.line(f"  {p.cyan}{p.bold}AUTOMATION / OPERATIONS{p.reset}")
-        for key, label in (
-            ("a", "add power schedule"), ("l", "queue / pause / resume / delete"),
-            ("p", "PAUSE ALL scheduling"), ("e", "enable scheduling"),
-            ("h", "scheduled activity"), ("w", "Wake-on-LAN"),
-            ("d", "passive diagnostics"), ("n", "KVM notebook"),
-            ("x", "export schedules and activity"),
-        ):
-            self.ui.line(f"  {p.cyan}‹{key}›{p.reset}  {label}")
-        self.ui.line(f"  {p.muted}Web operations deck: https://<this-kvm>/command/{p.reset}")
-        self.ui.rule()
-        self.ui.line(f"  {p.muted}{p.bold}‹q›{p.reset}  quit")
-        self.ui.rule()
-        return self.ui.ask(f"  {p.magenta}{p.bold}❯{p.reset} {p.white}choose{p.reset} ")
+        from automation.terminal_design import menu
+        items = [(item.key, item.label, item.hint, item.section, item.badge) for item in MENU_ITEMS]
+        extras = [(key, label, hint, group, badge) for key, label, hint, group, badge in EXTRA_ITEMS]
+        return menu(self, items, extras)
 
     def pause(self) -> bool:
         p = self.ui.palette
@@ -618,11 +605,13 @@ class ATXConsole:
             except ImportError:
                 self.ui.error("Install the automation directory beside atx_console.py to use these tools")
         for key, action in {"a": "add", "l": "queue", "p": "pause", "e": "enable", "h": "history",
-                            "w": "wake", "d": "diagnostics", "n": "notes", "x": "export"}.items():
+                            "w": "wake", "d": "diagnostics", "n": "notes", "x": "export",
+                            "f": "fleet", "m": "presets", "r": "recover", "c": "cancel",
+                            "v": "watch", "b": "backup", "i": "restore", "s": "settings", "t": "appearance", "/": "search"}.items():
             actions[key] = lambda action=action: extra(action)
         while True:
             self.banner()
-            if not self.need_board():
+            if not self.remote_target and not self.need_board():
                 self.ui.warn(
                     "actions that talk to the board will fail until it enumerates"
                 )
@@ -641,7 +630,14 @@ class ATXConsole:
                 self.ui.warn("not a menu item")
                 self.ui.brief_delay()
                 continue
-            action()
+            if self.remote_target and normalized in {item.key for item in MENU_ITEMS}:
+                if normalized in ("1", "2", "3"):
+                    from automation.console_tools import ConsoleTools
+                    ConsoleTools(self).run({"1": "remote_status", "2": "remote_on", "3": "remote_off"}[normalized])
+                else:
+                    self.ui.warn("Raw and hard controls are local-only. Open that KVM's SSH console to use them.")
+            else:
+                action()
             if not self.pause():
                 self.goodbye("input closed — bye")
                 return 0
