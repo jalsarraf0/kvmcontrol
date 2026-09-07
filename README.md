@@ -5,12 +5,32 @@ An interactive console for the GL.iNet Comet KVM-over-IP appliance
 target PC's front-panel power/reset headers so the KVM can press those
 buttons remotely.
 
+## Command Center upgrade
+
+- Persistent power-on, graceful shutdown and Wake-on-LAN timers, including
+  one-time, 24-hour and weekly repeats; terminal and web controls share a queue.
+- A dark command-center dashboard with countdowns, pause/resume/delete,
+  activity history, keyboard shortcuts, notes, diagnostics and exports.
+- An expanded synthwave terminal menu, passive diagnostics, KVM notebook,
+  Wake-on-LAN and bounded ATX command timeouts.
+- An additive service, authenticated Unix-socket API, backed-up deployment
+  and rollback; the vendor KVM firmware remains in place.
+
+Scheduling starts **paused**. No feature tests have been run for this
+upgrade; user acceptance is deferred. See [the operations guide](docs/COMMAND-CENTER.md)
+and [hardware/software research](docs/CAPABILITIES.md).
+
+```sh
+./deploy/push.sh <first-kvm-ssh-alias> <second-kvm-ssh-alias>
+# Then open https://<kvm>/command/ or use the existing SSH script path.
+```
+
 ## Contents
 
-Two equivalent implementations, same interaction model (numbered menu,
-type a number, press Enter — no arrow keys, no raw terminal mode), same
-safety confirmations, same `atxpower` commands. Pick whichever fits;
-neither depends on the other.
+The Python console is the primary interface. The shell entry point launches
+it when installed alongside it, and retains its original shell-only mode
+as a fallback (`ATX_SHELL_LEGACY=1`). Both use line-buffered input and
+explicit confirmations; no raw terminal mode is required.
 
 - `atx-console.sh` — bash + ANSI escapes, no dependencies beyond a
   shell that supports 24-bit color.
@@ -44,7 +64,12 @@ either way, so that whole class of bug doesn't apply here.
 - For `atx-console.sh`: a shell that supports `bash` and 24-bit color
   escapes. For `atx_console.py`: Python 3 (3.8+; developed against 3.12).
 
-## Deploying
+## Copying the basic console only
+
+For the complete upgrade, use `deploy/push.sh` as described above. The
+manual copies below install only the basic entry points; automation tools
+also require the `automation/` package and service.
+
 
 The appliance is a minimal embedded box, not a general git host — it
 doesn't pull this repo directly. Copy the script(s) over instead, keeping
@@ -88,3 +113,8 @@ graceful shutdown ends that session too — the script warns about this at
 the power-off prompt regardless of hostname. Every state-changing action
 requires a `y` confirmation; the raw click commands (short/long/reset)
 skip the on/off status check entirely and go straight to the wire.
+
+## License
+
+The command-center addon is GPL-3.0-or-later and integrates with the
+GPL-licensed GL.iNet/PiKVM KVMD libraries. See [LICENSE](LICENSE).

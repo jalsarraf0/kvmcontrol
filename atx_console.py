@@ -4,7 +4,8 @@
 This program simulates the attached PC's physical front-panel buttons through
 ``atxpower``.  It does not control power to the KVM appliance itself.
 
-Hard power-off and reset can lose unsaved work.  Do not run unattended.
+Hard power-off and reset require confirmation. Optional persistent automation
+permits only graceful on/off and Wake-on-LAN, and starts paused.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+import shutil
 from dataclasses import dataclass
 from typing import TextIO
 
@@ -285,10 +287,13 @@ class ATXConsole:
             (p.purple, " ╚██████╔╝███████╗██║  ██╗ ╚████╔╝ ██║ ╚═╝ ██║"),
             (p.cyan, "  ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚═╝"),
         )
-        for color, text in logo:
-            self.ui.line(f"{color}{text}{p.reset}")
+        if shutil.get_terminal_size((80, 24)).columns < 58:
+            self.ui.line(f"  {p.cyan}{p.bold}GLKVM / COMMAND CENTER{p.reset}")
+        else:
+            for color, text in logo:
+                self.ui.line(f"{color}{text}{p.reset}")
         self.ui.line()
-        self.ui.line(f"                    {p.muted}{p.italic}ATX remote power console{p.reset}")
+        self.ui.line(f"                    {p.muted}{p.italic}COMMAND CENTER / POWER + AUTOMATION{p.reset}")
         self.ui.line()
         self.ui.rule()
         self.ui.line(f"  {p.muted}host{p.reset}    {p.white}{p.bold}{self.settings.host}{p.reset}")
@@ -341,7 +346,10 @@ class ATXConsole:
                 stdout=subprocess.PIPE,
                 stderr=stderr,
                 check=False,
+                timeout=8,
             )
+        except subprocess.TimeoutExpired:
+            return CommandResult(124, "ATX command timed out; inspect the host before retrying")
         except OSError as exc:
             return CommandResult(126, str(exc))
         return CommandResult(completed.returncode, self._decode(completed.stdout))
@@ -350,6 +358,8 @@ class ATXConsole:
         if not self.board_present():
             return "NO-BOARD"
         result = self.invoke("power_state", combine_stderr=False)
+        if result.returncode != 0:
+            return "UNKNOWN"
         for line in result.output.splitlines():
             fields = line.split()
             if fields:
@@ -567,13 +577,24 @@ class ATXConsole:
             # hint length, rather than a fixed-width hint field that
             # would misalign or truncate if a hint ever grows. +2 for
             # the leading indent printed before the "‹N›" below.
-            prefix_len = 2 + 3 + 2 + MENU_LABEL_WIDTH + len(item.hint)
+            prefix_len = 2 + len(item.key) + 2 + 2 + MENU_LABEL_WIDTH + len(item.hint)
             spacing = " " * max(2, MENU_WIDTH - prefix_len - len(badge_text))
             self.ui.line(
                 f"  {section_color}{p.bold}‹{item.key}›{p.reset}  "
                 f"{item.label:<{MENU_LABEL_WIDTH}}{p.muted}{item.hint}{p.reset}"
                 f"{spacing}{badge_color}{p.bold}{badge_text}{p.reset}"
             )
+        self.ui.rule()
+        self.ui.line(f"  {p.cyan}{p.bold}AUTOMATION / OPERATIONS{p.reset}")
+        for key, label in (
+            ("a", "add power schedule"), ("l", "queue / pause / resume / delete"),
+            ("p", "PAUSE ALL scheduling"), ("e", "enable scheduling"),
+            ("h", "scheduled activity"), ("w", "Wake-on-LAN"),
+            ("d", "passive diagnostics"), ("n", "KVM notebook"),
+            ("x", "export schedules and activity"),
+        ):
+            self.ui.line(f"  {p.cyan}‹{key}›{p.reset}  {label}")
+        self.ui.line(f"  {p.muted}Web operations deck: https://<this-kvm>/command/{p.reset}")
         self.ui.rule()
         self.ui.line(f"  {p.muted}{p.bold}‹q›{p.reset}  quit")
         self.ui.rule()
@@ -590,6 +611,15 @@ class ATXConsole:
 
     def run(self) -> int:
         actions = {item.key: getattr(self, item.handler) for item in MENU_ITEMS}
+        def extra(action):
+            try:
+                from automation.console_tools import ConsoleTools
+                ConsoleTools(self).run(action)
+            except ImportError:
+                self.ui.error("Install the automation directory beside atx_console.py to use these tools")
+        for key, action in {"a": "add", "l": "queue", "p": "pause", "e": "enable", "h": "history",
+                            "w": "wake", "d": "diagnostics", "n": "notes", "x": "export"}.items():
+            actions[key] = lambda action=action: extra(action)
         while True:
             self.banner()
             if not self.need_board():

@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+DAEMON=/usr/bin/python3
+ROOT=/usr/share/kvmcontrol
+PIDFILE=/run/kvmcontrol/service.pid
+case "${1:-}" in
+    start)
+        mkdir -p /run/kvmcontrol
+        chmod 700 /run/kvmcontrol
+        cd "$ROOT" || exit 1
+        start-stop-daemon --start --quiet --background --make-pidfile \
+            --pidfile "$PIDFILE" --exec "$DAEMON" -- -m automation.service
+        ;;
+    stop)
+        start-stop-daemon --stop --quiet --pidfile "$PIDFILE" --exec "$DAEMON"
+        ;;
+    restart)
+        "$0" stop
+        "$0" start
+        ;;
+    status)
+        test -f "$PIDFILE" && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+        ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac

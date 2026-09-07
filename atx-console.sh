@@ -10,6 +10,12 @@
 
 set -u
 
+# New installations keep both entry points, with one shared feature set.
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/atx_console.py" ] && [ "${ATX_SHELL_LEGACY:-0}" != 1 ]; then
+    exec python3 "$SCRIPT_DIR/atx_console.py" "$@"
+fi
+
 ATXPOWER="${ATXPOWER:-/usr/sbin/atxpower}"
 DEVICE="${ATX_DEVICE:-/dev/ttyACM0}"
 HOST="$(hostname 2>/dev/null || echo unknown)"
