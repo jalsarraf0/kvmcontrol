@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,26 @@ def atomic_write(path, content, mode=0o644):
             os.unlink(temporary)
 
 
+def validate_fleet_document(data):
+    import re
+    if not isinstance(data, list) or not 1 <= len(data) <= 8:
+        raise ValueError('Fleet profiles must contain 1–8 targets')
+    ids = set()
+    for target in data:
+        if not isinstance(target, dict) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,32}', str(target.get('id', ''))) or target['id'] in ids:
+            raise ValueError('Invalid or duplicate target ID')
+        ids.add(target['id'])
+        host = target.get('host', '')
+        if not isinstance(host, str) or host and not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,100}', host):
+            raise ValueError('Invalid SSH target')
+        label = target.get('label', '')
+        if not isinstance(label, str) or not 1 <= len(label) <= 60 or not label.isprintable():
+            raise ValueError('Invalid target label')
+        url = target.get('url', '')
+        if not isinstance(url, str) or not (url.startswith('https://') or url == '/command/'):
+            raise ValueError('Fleet dashboard URL must use HTTPS')
+
+
 def nginx_check():
     subprocess.run(['/usr/sbin/nginx', '-t', '-p', '/etc/kvmd/nginx',
                     '-c', '/etc/kvmd/nginx-kvmd.conf',
@@ -50,17 +71,31 @@ def nginx_reload():
     os.kill(int(Path('/run/kvmd/nginx.pid').read_text()), signal.SIGHUP)
 
 
+def pid_alive():
+    try:
+        os.kill(int(PID.read_text()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def stop_service():
-    if INIT.exists() and PID.exists():
+    if INIT.exists():
         subprocess.run([str(INIT), 'stop'], check=False)
-        for _ in range(10):
-            try:
-                os.kill(int(PID.read_text()), 0)
-            except (OSError, ValueError):
-                break
-            time.sleep(0.5)
-        else:
+    for _ in range(30):
+        if not pid_alive() and not SOCKET.exists():
+            break
+        time.sleep(0.5)
+    else:
+        if pid_alive():
+            os.kill(int(PID.read_text()), signal.SIGTERM)
+            time.sleep(1)
+        if pid_alive():
             raise RuntimeError('Automation service did not stop; no files will be replaced')
+    if SOCKET.exists():
+        SOCKET.unlink()
+    if PID.exists() and not pid_alive():
+        PID.unlink()
 
 
 def main():
@@ -128,16 +163,25 @@ def main():
         manifest.append({'path': str(destination), 'backup': str(original) if exists else None})
     (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2))
     shutil.copy2(source / 'deploy/rollback.py', backup / 'rollback.py')
+    shutil.copy2(source / 'automation/store_compat.py', backup / 'store_compat.py')
+    if state_path.exists():
+        shutil.copy2(state_path, backup / 'power-schedules.json')
+    fleet_path = Path('/etc/kvmd/user/kvmcontrol-fleet.json')
+    if fleet_path.exists():
+        shutil.copy2(fleet_path, backup / 'kvmcontrol-fleet.json')
     previous_service = INIT.exists()
     stop_service()
     try:
         for destination, (content, mode) in replacements.items():
             atomic_write(destination, content, mode)
         nginx_check()
+        fleet_src = source / 'local' / 'fleet.json'
+        if fleet_src.is_file() and not fleet_path.exists():
+            validate_fleet_document(json.loads(fleet_src.read_text()))
+            atomic_write(fleet_path, fleet_src.read_bytes(), 0o600)
         subprocess.run([str(INIT), 'start'], check=True)
-        for _ in range(20):
-            if SOCKET.exists() and PID.exists():
-                os.kill(int(PID.read_text()), 0)
+        for _ in range(40):
+            if SOCKET.exists() and pid_alive() and stat.S_ISSOCK(SOCKET.stat().st_mode):
                 break
             time.sleep(0.25)
         else:

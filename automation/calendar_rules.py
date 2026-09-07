@@ -42,9 +42,12 @@ def calendar_next(job, after):
 
 def fields(body, at, repeat):
     zone_name = body.get('timezone', 'UTC')
-    if not isinstance(zone_name, str) or len(zone_name) > 80:
+    if not isinstance(zone_name, str) or not zone_name or len(zone_name) > 80:
         raise ValueError('Choose an IANA time zone')
-    zone = ZoneInfo(zone_name)
+    try:
+        zone = ZoneInfo(zone_name)
+    except Exception as error:
+        raise ValueError('Choose an IANA time zone') from error
     default_days = list(range(5)) if repeat == 'weekdays' else [5, 6] if repeat == 'weekends' else list(range(7))
     days = body.get('days', default_days)
     if not isinstance(days, list) or not days or len(days) > 7 or any(type(day) is not int or day not in range(7) for day in days):

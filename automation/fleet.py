@@ -49,8 +49,8 @@ def call(target_id, path='/scheduler', body=None):
         return request(path, body)
     args = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', target['host'],
             'python3 /usr/share/kvmcontrol/automation/client.py --rpc']
-    result = subprocess.run(args, input=json.dumps({'path': path, 'body': body}),
-                            capture_output=True, text=True, timeout=40)
+    result = subprocess.run(args, input=json.dumps({'path': path, 'body': body}, allow_nan=False),
+                            capture_output=True, text=True, timeout=48)
     try:
         data = json.loads(result.stdout)
     except ValueError as error:

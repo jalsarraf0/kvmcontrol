@@ -10,59 +10,178 @@
   <script type="module" src="/command/static/command.js"></script>
 </head>
 <body>
+  <div class="scanlines" aria-hidden="true"></div>
   <aside class="rail">
     <a class="brand" href="/command/" aria-label="Command Center home">G<span>◆</span></a>
     <a href="#overview" title="Overview">◈<span>Overview</span></a>
+    <a href="#fleet" title="Fleet">⧉<span>Fleet</span></a>
     <a href="#automation" title="Power schedules">◷<span>Schedules</span></a>
     <a href="#toolbox" title="Toolbox">⌘<span>Toolbox</span></a>
+    <a href="#ops" title="Backup and settings">⚙<span>Ops</span></a>
     <a href="#activity" title="Activity">≋<span>Activity</span></a>
     <a href="/" title="Open KVM console">↗<span>Console</span></a>
   </aside>
   <main>
-    <header><div class="wordmark">GLKVM <span>/ COMMAND CENTER</span></div><div class="header-actions"><span id="connection" class="pill">CONNECTING</span><button id="refresh" class="quiet">Refresh</button><a class="button" href="/">Launch console ↗</a></div></header>
+    <header>
+      <div class="wordmark">GLKVM <span>/ COMMAND CENTER</span></div>
+      <div class="header-actions">
+        <span id="target-chip" class="pill">TARGET · LOCAL</span>
+        <span id="connection" class="pill">CONNECTING</span>
+        <button id="refresh" class="quiet">Refresh</button>
+        <a class="button" href="/">Launch console ↗</a>
+      </div>
+    </header>
     <div id="notice" role="status" aria-live="polite" hidden></div>
+    <div id="workflow" class="workflow" hidden>
+      <strong id="workflow-title">WORKFLOW</strong>
+      <span id="workflow-detail"></span>
+      <button id="cancel-workflow" class="danger">Cancel remaining steps</button>
+    </div>
     <section id="overview" class="hero">
-      <div><p class="eyebrow">REMOTE SYSTEMS · UNDER YOUR CONTROL</p><h1>Your machine.<br><span>Your command.</span></h1><p class="intro">Power, automate, and recover. A dedicated operations deck for your KVM.</p><div class="hero-actions"><a class="button primary" href="/">Enter live console ↗</a><button id="launcher-open">Find an action <kbd>/</kbd></button></div></div>
+      <div>
+        <p class="eyebrow">REMOTE SYSTEMS · UNDER YOUR CONTROL</p>
+        <h1>Your machine.<br><span>Your command.</span></h1>
+        <p class="intro">Tracked power, civil-time automation, dual-KVM fleet control, and recovery — a dedicated operations deck.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/">Enter live console ↗</a>
+          <button id="launcher-open">Find an action <kbd>/</kbd></button>
+        </div>
+      </div>
       <div class="orbital" aria-hidden="true"><div class="orbit orbit-two"></div><div class="orbit"></div><div class="core">GL<span>KVM</span><small>COMMAND LINK</small></div><span class="orbit-label">CONTROL BEYOND THE OS</span></div>
     </section>
     <div class="metrics">
       <article><span class="eyebrow">HOST POWER</span><strong id="power-state">Unknown</strong><small id="atx-detail">Checking ATX accessory</small></article>
       <article><span class="eyebrow">AUTOMATION</span><strong id="armed-state">Unknown</strong><small id="job-count">Waiting for scheduler</small></article>
       <article><span class="eyebrow">NEXT OPERATION</span><strong id="next-job">—</strong><small id="countdown">No scheduled operation</small></article>
-      <article><span class="eyebrow">LOCAL CLOCK</span><strong id="clock">—</strong><small id="timezone">Browser time zone</small></article>
+      <article><span class="eyebrow">TARGET CLOCK</span><strong id="clock">—</strong><small id="timezone">Browser time zone</small></article>
     </div>
+    <section class="section" id="fleet">
+      <div class="section-heading"><div><p class="eyebrow">00 / FLEET</p><h2>Know the target before you press.</h2></div></div>
+      <p class="muted">Commands confirm the exact hostname. Remote targets use existing SSH trust from this KVM. Keyboard shortcuts and live video stay on this appliance — open that KVM’s console for HID.</p>
+      <div id="fleet-cards" class="fleet-grid"><p class="empty">Loading fleet…</p></div>
+    </section>
     <section class="section" id="automation">
       <div class="section-heading"><div><p class="eyebrow">01 / AUTOMATION</p><h2>Power on your terms.</h2></div><button id="arm-toggle" disabled>Enable scheduling</button></div>
-      <p class="muted">Schedules run on the KVM with your browser closed. New installations start paused. ATX shutdown asks the OS to shut down; it never forces power off.</p>
+      <p class="muted">Schedules run on the selected KVM with your browser closed. New installations start paused. ATX shutdown asks the OS to shut down; it never forces power off. Civil-time jobs skip missing DST hours and use the first fall-back occurrence.</p>
       <div class="schedule-layout">
         <form id="schedule-form" class="panel">
           <h3>Schedule an operation</h3>
           <label>Schedule name<input name="name" maxlength="80" placeholder="Morning workstation startup" required></label>
-          <div class="form-row"><label>Action<select name="action"><option value="on">Power on · ATX</option><option value="off">Shut down · ATX</option><option value="wol">Wake-on-LAN</option></select></label><label>Repeat<select name="repeat"><option value="once">One time</option><option value="daily">Every 24 hours</option><option value="weekly">Every 7 days</option></select></label></div>
+          <div class="form-row">
+            <label>Action<select name="action"><option value="on">Power on · ATX</option><option value="off">Shut down · ATX</option><option value="wol">Wake-on-LAN</option><option value="recover">Guided recovery</option></select></label>
+            <label>Repeat<select name="repeat"><option value="once">One time</option><option value="daily">Every 24 hours · UTC</option><option value="weekly">Every 7 days · UTC</option><option value="weekdays">Weekdays · local</option><option value="weekends">Weekends · local</option><option value="calendar">Custom weekdays · local</option></select></label>
+          </div>
           <label>First execution · your local time<input name="at" type="datetime-local" required></label>
+          <label>IANA time zone<input name="timezone" maxlength="80" placeholder="America/Chicago"></label>
+          <label id="wall-label" hidden>Local wall time (HH:MM)<input name="wall_time" placeholder="08:00" maxlength="5"></label>
+          <fieldset id="days-box" hidden>
+            <legend>Active weekdays</legend>
+            <label><input type="checkbox" name="day" value="0" checked> Mon</label>
+            <label><input type="checkbox" name="day" value="1" checked> Tue</label>
+            <label><input type="checkbox" name="day" value="2" checked> Wed</label>
+            <label><input type="checkbox" name="day" value="3" checked> Thu</label>
+            <label><input type="checkbox" name="day" value="4" checked> Fri</label>
+            <label><input type="checkbox" name="day" value="5"> Sat</label>
+            <label><input type="checkbox" name="day" value="6"> Sun</label>
+          </fieldset>
+          <label>Excluded dates · YYYY-MM-DD, one per line<textarea name="exceptions" rows="2" maxlength="800" placeholder="2026-12-25"></textarea></label>
           <div class="presets"><button type="button" data-delay="15">In 15 min</button><button type="button" data-delay="60">In 1 hour</button><button type="button" data-delay="480">In 8 hours</button></div>
           <label id="schedule-mac-label" hidden>Target MAC address<input name="mac" placeholder="AA:BB:CC:DD:EE:FF" maxlength="17"></label>
-          <p class="hint">Repeats use fixed UTC intervals, so local time shifts with daylight saving. Missed runs are skipped. Keep the KVM powered and its clock synchronized.</p>
-          <button class="primary" type="submit">＋ Save schedule</button>
+          <p class="hint" id="repeat-hint">Repeats use fixed UTC intervals, so local time shifts with daylight saving. Missed runs are skipped.</p>
+          <div class="form-row"><button class="primary" type="submit">＋ Save schedule</button><button type="button" id="save-preset">Save as preset</button></div>
         </form>
-        <div class="panel queue-panel"><div class="panel-heading"><h3>Operation queue</h3><span class="pill">PERSISTENT</span></div><div id="jobs" class="jobs"><p class="empty">Loading schedules…</p></div></div>
+        <div class="panel queue-panel">
+          <div class="panel-heading"><h3>Operation queue</h3><span class="pill">PERSISTENT</span></div>
+          <div id="presets" class="preset-list"></div>
+          <div id="jobs" class="jobs"><p class="empty">Loading schedules…</p></div>
+        </div>
       </div>
     </section>
     <section class="section" id="toolbox">
       <div class="section-heading"><div><p class="eyebrow">02 / TOOLBOX</p><h2>Less friction. More control.</h2></div></div>
       <div class="tool-grid">
-        <article class="panel"><span class="tool-icon">⏻</span><h3>Host power</h3><p class="muted">Send a power-on or graceful shutdown request through the ATX accessory.</p><div class="form-row"><button id="power-on" disabled>Power on</button><button id="power-off" class="danger" disabled>Shut down</button></div><p class="hint">Targets the attached computer, not the KVM.</p></article>
-        <form id="wake-form" class="panel"><span class="tool-icon">↯</span><h3>Wake a device</h3><label>Saved LAN devices<select id="wake-devices"><option value="">Enter a MAC address</option></select></label><label>MAC address<input name="mac" placeholder="AA:BB:CC:DD:EE:FF" pattern="([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" required></label><button type="submit">Send wake packet ↗</button><p class="hint">Requires Wake-on-LAN enabled in the target firmware and NIC. A sent packet does not confirm startup.</p></form>
-        <article class="panel"><span class="tool-icon">⌘</span><h3>Keyboard deck</h3><p class="muted">Send deliberate shortcuts, including BIOS keys, to the attached host.</p><div id="shortcuts" class="shortcut-grid"></div><details><summary>Add a shortcut</summary><form id="shortcut-form"><label>Name<input name="name" maxlength="32" required></label><label>Browser key codes, comma separated<input name="keys" placeholder="ControlLeft,AltLeft,Delete" maxlength="160" required></label><button>Save shortcut</button></form></details><p class="hint">Every shortcut requires confirmation. Custom shortcuts stay in this browser.</p></article>
-        <article class="panel notes-panel"><span class="tool-icon">≡</span><h3>Session notebook</h3><label for="notes">Recovery steps and reminders · this browser only</label><textarea id="notes" rows="6" maxlength="12000" placeholder="Boot menu key, recovery checklist, maintenance notes…"></textarea><div class="panel-heading"><small id="notes-status">Do not store passwords here.</small><button id="notes-export" class="quiet">Export notes</button></div></article>
-        <article class="panel"><span class="tool-icon">◫</span><h3>Recovery workspace</h3><p class="muted">Use the full console for video, virtual media, recording, and keyboard/mouse controls.</p><a class="button" href="/">Open console ↗</a><a class="text-link" href="/api/log?seek=3600" target="_blank" rel="noopener">Open recent daemon logs ↗</a><button id="export-schedules" class="quiet">Export schedules & activity</button></article>
-        <article class="panel"><span class="tool-icon">◈</span><h3>Connection diagnostics</h3><dl id="diagnostics"><dt>API</dt><dd>Waiting…</dd></dl><p class="hint">Status refreshes every 10 seconds while this page is visible. No network scan runs automatically.</p><button id="diagnostics-export" class="quiet">Export status report</button></article>
+        <article class="panel">
+          <span class="tool-icon">⏻</span>
+          <h3>Tracked host power</h3>
+          <p class="muted">Confirm the hostname, then run a watched on / off / recovery workflow. Two consecutive ATX readings are required.</p>
+          <div class="form-row">
+            <button id="power-on" disabled>Power on</button>
+            <button id="power-off" class="danger" disabled>Shut down</button>
+          </div>
+          <button id="power-recover" disabled>Guided recovery</button>
+          <p class="hint">Targets the attached computer of the selected KVM, not the KVM itself.</p>
+        </article>
+        <form id="wake-form" class="panel">
+          <span class="tool-icon">↯</span>
+          <h3>Wake a device</h3>
+          <label>Saved LAN devices<select id="wake-devices"><option value="">Enter a MAC address</option></select></label>
+          <label>MAC address<input name="mac" placeholder="AA:BB:CC:DD:EE:FF" pattern="([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" required></label>
+          <button type="submit">Send tracked wake ↗</button>
+          <p class="hint">Requires Wake-on-LAN enabled in the target firmware and NIC. A sent packet does not confirm startup.</p>
+        </form>
+        <article class="panel">
+          <span class="tool-icon">⌘</span>
+          <h3>Keyboard deck</h3>
+          <p class="muted">Send deliberate shortcuts, including BIOS keys, to the computer attached to <strong>this</strong> KVM.</p>
+          <div id="shortcuts" class="shortcut-grid"></div>
+          <details><summary>Add a shortcut</summary><form id="shortcut-form"><label>Name<input name="name" maxlength="32" required></label><label>Browser key codes, comma separated<input name="keys" placeholder="ControlLeft,AltLeft,Delete" maxlength="160" required></label><button>Save shortcut</button></form></details>
+          <p class="hint" id="hid-hint">Every shortcut requires confirmation. Custom shortcuts stay in this browser. Disabled while a remote fleet target is selected.</p>
+        </article>
+        <article class="panel notes-panel">
+          <span class="tool-icon">≡</span>
+          <h3>Session notebook</h3>
+          <label for="notes">Recovery steps and reminders · this browser only</label>
+          <textarea id="notes" rows="6" maxlength="12000" placeholder="Boot menu key, recovery checklist, maintenance notes…"></textarea>
+          <div class="panel-heading"><small id="notes-status">Do not store passwords here.</small><button id="notes-export" class="quiet">Export notes</button></div>
+        </article>
+        <article class="panel">
+          <span class="tool-icon">◫</span>
+          <h3>Recovery workspace</h3>
+          <p class="muted">Use the full console for video, virtual media, recording, and keyboard/mouse controls.</p>
+          <a class="button" href="/">Open this KVM’s console ↗</a>
+          <a class="text-link" id="remote-console" hidden href="/" target="_blank" rel="noopener">Open selected target dashboard ↗</a>
+          <a class="text-link" href="/api/log?seek=3600" target="_blank" rel="noopener">Open recent daemon logs ↗</a>
+        </article>
+        <article class="panel">
+          <span class="tool-icon">◈</span>
+          <h3>Connection diagnostics</h3>
+          <dl id="diagnostics"><dt>API</dt><dd>Waiting…</dd></dl>
+          <p class="hint">Status refreshes every 10 seconds while this page is visible. No network scan runs automatically.</p>
+          <button id="diagnostics-export" class="quiet">Export status report</button>
+        </article>
       </div>
     </section>
-    <section class="section" id="activity"><div class="section-heading"><div><p class="eyebrow">03 / FLIGHT RECORDER</p><h2>Every scheduled move.</h2></div><span class="pill">LAST 100 EVENTS</span></div><div id="history" class="panel history"><p class="empty">No activity yet.</p></div></section>
-    <footer><span>GLKVM / COMMAND CENTER</span><span>Browser notes stay local · Power schedules live on the KVM</span></footer>
+    <section class="section" id="ops">
+      <div class="section-heading"><div><p class="eyebrow">03 / OPERATIONS</p><h2>Settings, alerts, backups.</h2></div></div>
+      <div class="tool-grid">
+        <form id="settings-form" class="panel">
+          <h3>Target settings</h3>
+          <label>IANA time zone<input name="timezone" maxlength="80" required></label>
+          <label>Upcoming warning (seconds)<input name="warning_seconds" type="number" min="30" max="3600" required></label>
+          <label>Transition timeout (seconds)<input name="transition_timeout" type="number" min="15" max="600" required></label>
+          <label class="check"><input type="checkbox" name="notify"> Enable HTTPS webhook notifications</label>
+          <label>Webhook URL · HTTPS only, no embedded credentials<input name="url" type="url" placeholder="https://example.invalid/hooks/kvm" maxlength="2048"></label>
+          <p class="hint">Saving settings never sends a test notification. The URL is omitted from ordinary status and backups.</p>
+          <button class="primary" type="submit">Save settings</button>
+        </form>
+        <article class="panel">
+          <h3>Backup &amp; restore</h3>
+          <p class="muted">Exports jobs, presets and settings. Webhook URLs and history are not restored. Restore requires a paused scheduler and no active workflow; imported jobs stay inactive.</p>
+          <div class="form-row">
+            <button id="backup-download">Download backup</button>
+            <label class="file-label">Choose backup<input id="backup-file" type="file" accept="application/json,.json"></label>
+          </div>
+          <label>Restore mode<select id="restore-mode"><option value="merge">Merge · keep existing jobs</option><option value="replace">Replace jobs</option></select></label>
+          <button id="restore-preview">Preview restore</button>
+          <pre id="restore-preview-out" class="preview" hidden></pre>
+          <button id="restore-commit" hidden>Confirm restore</button>
+        </article>
+      </div>
+    </section>
+    <section class="section" id="activity"><div class="section-heading"><div><p class="eyebrow">04 / FLIGHT RECORDER</p><h2>Every scheduled move.</h2></div><span class="pill">LAST 100 EVENTS</span></div><div id="history" class="panel history"><p class="empty">No activity yet.</p></div></section>
+    <footer><span>GLKVM / COMMAND CENTER</span><span>Browser notes stay local · Power schedules live on the selected KVM</span></footer>
   </main>
-  <dialog id="confirm-dialog"><form method="dialog"><p class="eyebrow">CONFIRM OPERATION</p><h2 id="confirm-title">Send command?</h2><p id="confirm-detail"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button value="confirm" class="primary">Confirm</button></div></form></dialog>
-  <dialog id="launcher"><div class="panel-heading"><h2>Command launcher</h2><button id="launcher-close" aria-label="Close command launcher">×</button></div><label>Find an action<input id="launcher-search" type="search" placeholder="Console, schedule, wake, notes…"></label><div id="launcher-results"></div></dialog>
+  <dialog id="confirm-dialog"><form method="dialog"><p class="eyebrow">CONFIRM OPERATION</p><p id="confirm-target" class="target-line"></p><h2 id="confirm-title">Send command?</h2><p id="confirm-detail"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button value="confirm" class="primary">Confirm</button></div></form></dialog>
+  <dialog id="launcher"><div class="panel-heading"><h2>Command launcher</h2><button id="launcher-close" aria-label="Close command launcher">×</button></div><label>Find an action<input id="launcher-search" type="search" placeholder="Console, schedule, wake, fleet, backup…"></label><div id="launcher-results"></div></dialog>
 </body>
 </html>

@@ -7,22 +7,32 @@ adds an operations section. `atx-console.sh` launches the Python interface
 when the adjacent Python file exists; `ATX_SHELL_LEGACY=1` selects the old
 shell-only implementation. No raw terminal mode or arrow keys are needed.
 
-| Key | New operation |
+| Key | Operation |
 | --- | --- |
-| a | Add a power-on, graceful shutdown, or Wake-on-LAN schedule |
-| l | List schedules; pause, resume, or delete a selected job |
-| p | Pause all scheduling |
+| f | Switch fleet target (local or SSH peer) |
+| r | Guided recovery: off → confirmed off → on |
+| v | Watch workflow phase and countdown |
+| c | Cancel remaining workflow steps |
+| a | Add on/off/wol/recover schedule (calendar or UTC interval) |
+| l | Pause, resume, snooze, skip, or delete a job |
+| m | Save, apply, or delete maintenance presets |
+| p | Pause all scheduling and request cancel |
 | e | Review the queue and enable scheduling |
 | h | Show the latest 30 schedule events |
-| w | Send a confirmed Wake-on-LAN packet |
-| d | Passive device, clock, uptime, storage and service diagnostics |
-| n | Append to the KVM notebook |
-| x | Export schedules and history to the KVM user directory |
+| w | Tracked Wake-on-LAN through the scheduler |
+| d | Passive local inventory plus selected-target scheduler status |
+| n | Append to the notebook on **this** KVM |
+| s | Time zone, warning, transition timeout, optional webhook |
+| b / i | Backup and preview-before-restore |
+| t / / | Appearance (theme/compact/animation) and command search |
+| x | Secret-free backup export to the KVM user directory |
 
 Times accept `+15m`, `+2h`, `+1d`, or ISO timestamps with explicit offsets,
-for example `2026-09-08T08:00:00-05:00`. Daily means every 24 hours;
-weekly means every 7 days. Repeats remain anchored in UTC, so local time
-shifts when daylight saving changes. Jobs may be at most 366 days ahead.
+for example `2026-09-08T08:00:00-05:00`. `daily`/`weekly` remain fixed UTC
+intervals. `weekdays`/`weekends`/`calendar` use civil local time: missing
+spring-forward hours are skipped; repeated fall-back hours use the first
+occurrence. Jobs may be at most 366 days ahead. Numbered raw/hard ATX
+clicks stay on the SSH session’s local board.
 
 The browser dashboard is at `https://<kvm>/command/`. Sign in through the
 existing GL.iNet login. A Command Center link is added to the vendor page.
@@ -59,6 +69,18 @@ This favors at-most-once attempts over guaranteed execution. Pausing cannot
 undo an already sent command. Repeating jobs advance to the next future
 interval instead of replaying a backlog. Failed commands are recorded
 without automatic retries or forced-shutdown escalation.
+
+Manual power on/off/recovery from the dashboard uses `/api/scheduler/run`
+and requires `confirm_target` to equal the appliance hostname. Two
+consecutive ATX readings must match before a transition is reported
+confirmed. Optional HTTPS webhooks are off by default; saving settings
+never sends a test; ordinary status and backups redact the URL.
+
+Fleet profiles are optional (`/etc/kvmd/user/kvmcontrol-fleet.json`).
+Missing file means local-only. Installer copies `local/fleet.json` from the
+staging tree only when no profile already exists. SSH uses BatchMode and
+StrictHostKeyChecking. Keyboard/HID shortcuts are never proxied to a
+remote target.
 
 Graceful shutdown is a request to the OS, not proof of a shutdown. A sent
 WOL packet does not prove startup. ATX actions require a recognized power
@@ -100,7 +122,10 @@ For a later rollback, first pause scheduling, then run:
 python3 /etc/kvmd/user/kvmcontrol-backups/<timestamp>/rollback.py
 ```
 
-Rollback restores the prior files and retains schedule data for diagnosis.
+Rollback restores the prior files. The installer also snapshots
+`power-schedules.json`. Rolling a v2 store back onto v1 code converts jobs
+to the v1 schema, pauses scheduling, and leaves a `.v2` copy beside the
+live file. New civil-time jobs become one-shot at their next `at`.
 Firmware upgrades may remove addon files; reinstall from this repository
 after checking compatibility. Do not replace the commercial firmware's
 compiled KVMD modules with source from a different release.
@@ -112,13 +137,23 @@ All browser endpoints use the existing KVM authentication. Responses use
 
 | Method | Endpoint | Body |
 | --- | --- | --- |
-| GET | `/api/scheduler` | none |
+| GET | `/api/scheduler` | none (webhook URL redacted) |
+| GET | `/api/scheduler/status` | none |
+| GET | `/api/scheduler/fleet` | none |
+| POST | `/api/scheduler/fleet` | `{"target":"peer","path":"/scheduler/run","body":{…}}` |
 | POST | `/api/scheduler/armed` | `{"armed":false}` |
-| POST | `/api/scheduler/jobs` | `{"name":"Morning","action":"on","at":"2026-09-08T08:00:00-05:00","repeat":"daily"}` |
-| POST | `/api/scheduler/job` | `{"id":"…","operation":"pause"}`; also resume/delete |
+| POST | `/api/scheduler/jobs` | name, action, at, repeat; optional timezone, wall_time, days, exceptions, mac |
+| POST | `/api/scheduler/job` | `{"id":"…","operation":"pause"}`; also resume/delete/snooze/skip |
+| POST | `/api/scheduler/run` | `{"action":"on","confirm_target":"<hostname>"}` |
+| POST | `/api/scheduler/cancel` | none |
+| POST | `/api/scheduler/presets` | job fields, or `{"operation":"delete","name":"…"}` |
+| POST | `/api/scheduler/settings` | timezone, warning_seconds, transition_timeout, notifications |
+| GET | `/api/scheduler/backup` | none |
+| POST | `/api/scheduler/restore` | preview or token-confirmed commit; merge or replace |
 
-Actions: `on`, `off`, `wol` (requires `mac`). Repeats: `once`, `daily`,
-`weekly`. Export is for backup/review; no automatic rearming import exists.
+Actions: `on`, `off`, `wol` (requires `mac`), `recover`. Repeats: `once`,
+`daily`, `weekly`, `calendar`, `weekdays`, `weekends`. Restore imports jobs
+inactive and never restores webhook URLs or history.
 
 ## Acceptance later
 

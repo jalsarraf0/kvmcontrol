@@ -12,10 +12,11 @@ case "${1:-}" in
             --pidfile "$PIDFILE" --exec "$DAEMON" -- -m automation.service
         ;;
     stop)
-        start-stop-daemon --stop --quiet --pidfile "$PIDFILE" --exec "$DAEMON"
+        start-stop-daemon --stop --quiet --retry 10 --pidfile "$PIDFILE" --exec "$DAEMON"
         ;;
     restart)
         "$0" stop
+        sleep 1
         "$0" start
         ;;
     status)

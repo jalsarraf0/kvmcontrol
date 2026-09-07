@@ -1,0 +1,14 @@
+[
+  {
+    "id": "local",
+    "label": "this-kvm",
+    "host": "",
+    "url": "/command/"
+  },
+  {
+    "id": "peer",
+    "label": "peer-kvm",
+    "host": "root@peer-kvm",
+    "url": "https://peer-kvm.example/command/"
+  }
+]

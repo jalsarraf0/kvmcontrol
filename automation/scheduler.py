@@ -38,6 +38,7 @@ class SchedulerApi:
         self.__active = None
         self.__execution = None
         self.__cancel = asyncio.Event()
+        self.__hardware = None
         self.__warning_keys = set()
         self.__notices = asyncio.Queue(maxsize=20)
 
@@ -72,7 +73,7 @@ class SchedulerApi:
             for job in data["jobs"]:
                 if job["enabled"] and self.__due(job) <= time.time():
                     self.__advance(job, time.time())
-                    self.__event(data, job, "skipped", "Due before daemon startup; never replayed")
+                    self.__event(data, job, "skipped", "Due before service startup; never replayed")
                     changed = True
             if changed:
                 self.__write(data)
@@ -80,7 +81,7 @@ class SchedulerApi:
         except FileNotFoundError:
             pass
         except Exception:
-            self.__error = "Cannot read scheduler store; scheduling is locked until the file is repaired and KVMD restarted."
+            self.__error = "Cannot read scheduler store; scheduling is locked until the file is repaired and the kvmcontrol service is restarted."
             get_logger(0).exception("Power scheduler store is invalid")
 
     @staticmethod
@@ -128,6 +129,7 @@ class SchedulerApi:
         os.makedirs(directory, mode=0o700, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=".power-schedules-", dir=directory)
         try:
+            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as file:
                 json.dump(data, file, indent=2, allow_nan=False)
                 file.flush()
@@ -148,7 +150,7 @@ class SchedulerApi:
         try:
             await aiotools.run_async(self.__write, data)
         except Exception as ex:
-            self.__error = "Scheduler storage failed; dispatch is locked until KVMD restarts."
+            self.__error = "Scheduler storage failed; dispatch is locked until the kvmcontrol service restarts."
             get_logger(0).exception("Cannot persist power schedules")
             raise HttpError(self.__error, 503) from ex
         self.__data = data
@@ -273,9 +275,11 @@ class SchedulerApi:
         for key in ("timezone", "warning_seconds", "transition_timeout", "notifications"):
             if key in body:
                 settings[key] = body[key]
+        if not isinstance(settings['timezone'], str) or not settings['timezone'] or len(settings['timezone']) > 80:
+            raise BadRequestError("Unknown IANA time zone")
         try:
             ZoneInfo(settings['timezone'])
-        except (ValueError, TypeError, KeyError) as error:
+        except (ValueError, TypeError, KeyError, OSError) as error:
             raise BadRequestError("Unknown IANA time zone") from error
         for key, low, high in (("warning_seconds", 30, 3600), ("transition_timeout", 15, 600)):
             if type(settings[key]) is not int or not low <= settings[key] <= high:
@@ -318,7 +322,10 @@ class SchedulerApi:
         async with self.__lock:
             data = copy.deepcopy(self.__data)
             if body.get('operation') == 'delete':
-                data['presets'] = [item for item in data['presets'] if item['name'] != body.get('name')]
+                name = body.get('name')
+                if not isinstance(name, str) or not name.strip():
+                    raise BadRequestError('Preset name required')
+                data['presets'] = [item for item in data['presets'] if item['name'] != name]
             else:
                 preset = self.__validate_job(body, future=False)
                 data['presets'] = [item for item in data['presets'] if item['name'] != preset['name']]
@@ -372,20 +379,33 @@ class SchedulerApi:
                 raise HttpError('Pause scheduling and wait for the active workflow to finish before restoring', 409)
             data = copy.deepcopy(self.__data)
             data['jobs'] = ([] if mode == 'replace' else data['jobs']) + [dict(job, id=uuid.uuid4().hex, enabled=False) for job in jobs]
-            data['presets'] = presets
+            if mode == 'replace':
+                data['presets'] = presets
+            else:
+                incoming = {item['name'] for item in presets}
+                data['presets'] = [item for item in data['presets'] if item['name'] not in incoming] + presets
+                if len(data['presets']) > 16:
+                    raise BadRequestError('Restored presets would exceed 16')
             settings['notifications'] = data['settings']['notifications']
             data['settings'] = settings
             self.__event(data, {}, 'restored', f'{len(jobs)} inactive jobs restored ({mode})')
             await self.__save(data)
         return make_json_response()
 
+    def __busy(self):
+        return bool(self.__active) or (self.__hardware is not None and not self.__hardware.done())
+
     @exposed_http("GET", "/scheduler/status")
     async def __status(self, _):
         state = await self.__atx.get_state()
+        async with self.__lock:
+            active = copy.deepcopy(self.__active)
+            armed = self.__data['armed']
+            error = self.__error
+            jobs = len(self.__data['jobs'])
         return make_json_response({'target': socket.gethostname(), 'power': self.__power(state),
-                                   'atx': bool(state.get('enabled')), 'active': self.__active,
-                                   'armed': self.__data['armed'], 'error': self.__error,
-                                   'jobs': len(self.__data['jobs'])})
+                                   'atx': bool(state.get('enabled')), 'active': active,
+                                   'armed': armed, 'error': error, 'jobs': jobs})
 
     @exposed_http("POST", "/scheduler/run")
     @aiotools.atomic_fg
@@ -397,7 +417,7 @@ class SchedulerApi:
         job = self.__validate_job(body)
         job.update(id=uuid.uuid4().hex, enabled=False)
         async with self.__lock:
-            if self.__active:
+            if self.__busy():
                 raise HttpError('Another power workflow is active', 409)
             data = copy.deepcopy(self.__data)
             self.__event(data, job, 'dispatching', 'Manual workflow accepted and recorded')
@@ -435,7 +455,9 @@ class SchedulerApi:
                 raise InterruptedError('Cancelled during power observation')
             state = await asyncio.wait_for(self.__atx.get_state(), 8)
             power = self.__power(state)
-            self.__active['observed_power'] = power
+            async with self.__lock:
+                if self.__active:
+                    self.__active['observed_power'] = power
             stable = stable + 1 if power == desired else 0
             if stable >= 2:
                 return
@@ -451,8 +473,20 @@ class SchedulerApi:
             self.__event(data, self.__active, 'command', 'Sending ATX ' + action)
             await self.__save(data)
             self.__active['phase'] = 'sending_' + action
-            command = asyncio.create_task((self.__atx.power_on if action == 'on' else self.__atx.power_off)(True))
-        await asyncio.wait_for(command, 10)
+            self.__hardware = asyncio.create_task(
+                (self.__atx.power_on if action == 'on' else self.__atx.power_off)(True)
+            )
+            command = self.__hardware
+        try:
+            await asyncio.wait_for(asyncio.shield(command), 10)
+        except asyncio.TimeoutError as error:
+            raise TimeoutError('ATX command did not finish within 10s; the hardware request may still be in progress') from error
+        finally:
+            if self.__hardware is not None and self.__hardware.done():
+                failure = None if self.__hardware.cancelled() else self.__hardware.exception()
+                self.__hardware = None
+                if failure:
+                    raise failure
 
     async def __dispatch(self, job):
         await self.__phase('checking_target')
@@ -487,7 +521,15 @@ class SchedulerApi:
         self.__active = {**job, 'phase': 'starting', 'started': time.time(), 'target': socket.gethostname()}
         self.__execution = asyncio.create_task(self.__execute(job))
 
+    async def __record(self, job, status, detail):
+        async with self.__lock:
+            data = copy.deepcopy(self.__data)
+            self.__event(data, job, status, detail)
+            await self.__save(data)
+            self.__enqueue_notice(data['history'][0])
+
     async def __execute(self, job):
+        status, detail = 'failed', 'Unknown failure'
         try:
             detail = await self.__dispatch(job)
             status = 'completed'
@@ -496,16 +538,21 @@ class SchedulerApi:
         except TimeoutError as error:
             status, detail = 'timeout', str(error)
         except asyncio.CancelledError:
+            status, detail = 'interrupted', 'Service stopping; a command already sent cannot be undone'
+            try:
+                await self.__record(job, status, detail)
+            except Exception:
+                get_logger(0).exception('Cannot persist interrupted workflow')
+            finally:
+                self.__active = None
             raise
         except Exception as error:
             get_logger(0).exception('Power workflow failed')
             status, detail = 'failed', str(error)[:300]
         try:
-            async with self.__lock:
-                data = copy.deepcopy(self.__data)
-                self.__event(data, job, status, detail)
-                await self.__save(data)
-                self.__enqueue_notice(data['history'][0])
+            await self.__record(job, status, detail)
+        except Exception:
+            get_logger(0).exception('Cannot persist workflow result')
         finally:
             self.__active = None
 
@@ -513,8 +560,9 @@ class SchedulerApi:
         config = self.__data['settings']['notifications']
         if not config['enabled']:
             return
+        payload = {key: event.get(key, '') for key in ('time', 'job_id', 'name', 'status', 'detail')}
         try:
-            self.__notices.put_nowait((config['url'], copy.deepcopy(event)))
+            self.__notices.put_nowait((config['url'], payload))
         except asyncio.QueueFull:
             get_logger(0).warning('Notification queue full; notification dropped')
 
@@ -528,6 +576,8 @@ class SchedulerApi:
                     async with session.post(url, json={'source': 'kvmcontrol', 'target': socket.gethostname(), 'event': event}, allow_redirects=False) as response:
                         if not 200 <= response.status < 300:
                             raise RuntimeError('Webhook rejected notification')
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 status = 'notification_failed'
                 get_logger(0).warning('Webhook delivery failed; URL and response omitted')
@@ -536,6 +586,10 @@ class SchedulerApi:
                     data = copy.deepcopy(self.__data)
                     self.__event(data, {}, status, 'Delivery attempted once; no retries')
                     await self.__save(data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                get_logger(0).exception('Cannot record notification result')
             finally:
                 self.__notices.task_done()
 
@@ -547,6 +601,12 @@ class SchedulerApi:
                 await self.__execution
             except asyncio.CancelledError:
                 pass
+        if self.__hardware is not None:
+            try:
+                await self.__hardware
+            except Exception:
+                get_logger(0).exception('In-flight ATX command finished with an error during shutdown')
+            self.__hardware = None
 
     async def systask(self):
         while True:
@@ -567,7 +627,7 @@ class SchedulerApi:
                                 await self.__save(data)
                                 self.__warning_keys.add(warning_key)
                                 self.__enqueue_notice(data['history'][0])
-                            if due > now or self.__active:
+                            if due > now or self.__busy():
                                 continue
                             data = copy.deepcopy(self.__data)
                             job = next(item for item in data['jobs'] if item['id'] == original['id'])

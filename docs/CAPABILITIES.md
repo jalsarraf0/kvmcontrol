@@ -40,7 +40,7 @@ which invokes `/usr/sbin/atxpower /dev/ttyACM0 <action>`.
 | Recording, macros, OCR | `api/recorder.py`, `ocr.py`, existing console modules | Availability depends on installed binaries, firmware and configuration. |
 | Remote networking | Tailscale, ZeroTier, NetBird, Cloudflare APIs | Existing connectivity is retained; no tunnel, firewall or routing changes. |
 | Redfish / IPMI / VNC | `api/redfish.py`, `apps/ipmi`, `apps/vnc` | Present in source; may need separate configuration and services. |
-| Persistent power schedules | New `automation/scheduler.py` | Opt-in, bounded JSON store; one-time, 24-hour, and 7-day intervals. |
+| Persistent power schedules | New `automation/scheduler.py` | Opt-in, bounded JSON store; UTC intervals and civil-time weekdays/weekends/calendar with DST policy. |
 | Notes, action launcher, diagnostics export | New `web/command` frontend | Browser-only notes; no extra server database or dependencies. |
 
 The [manufacturer console guide](https://docs.gl-inet.com/kvm/en/user_guide/gl-rm1/console_guide/)
@@ -71,12 +71,15 @@ are skipped; active worker delays over 60 seconds are also skipped.
 Repeating jobs move to the next future interval rather than catching up.
 This favors at-most-once attempts over guaranteed execution.
 
-The browser sends offset-aware ISO timestamps, stored as UTC. Repeats are
-fixed elapsed intervals, not civil-time recurrence: daylight saving changes
-shift the displayed local hour. Keep both clocks synchronized. The UI shows
-clock skew; it does not change the appliance clock. Pause cannot retract an
-already dispatched physical command. An accepted graceful shutdown does
-not prove that the OS shut down, and a sent WOL packet does not prove boot.
+The browser sends offset-aware ISO timestamps, stored as UTC. Legacy
+`daily`/`weekly` jobs remain fixed elapsed intervals. `weekdays` /
+`weekends` / `calendar` jobs use IANA civil time: nonexistent
+spring-forward times are skipped; repeated fall-back times use the first
+occurrence. Keep both clocks synchronized. The UI shows clock skew; it does
+not change the appliance clock. Pause cannot retract an already dispatched
+physical command. An accepted graceful shutdown does not prove that the OS
+shut down, and a sent WOL packet does not prove boot. Tracked run/recovery
+requires two consecutive matching ATX readings before reporting success.
 
 ## Coverage and remaining uncertainty
 

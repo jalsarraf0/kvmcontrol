@@ -13,7 +13,7 @@ class LocalConnection(http.client.HTTPConnection):
 
 
 def request(path="/scheduler", body=None):
-    connection = LocalConnection("localhost", timeout=35)
+    connection = LocalConnection("localhost", timeout=45)
     try:
         connection.request("GET" if body is None else "POST", path,
                            body=None if body is None else json.dumps(body),
@@ -30,7 +30,7 @@ def request(path="/scheduler", body=None):
 def main():
     import sys
     try:
-        envelope = json.loads(sys.stdin.read(131073))
+        envelope = json.loads(sys.stdin.read(262144))
         path = envelope.get('path', '/scheduler')
         from automation.fleet import ALLOWED_PATHS
         if path not in ALLOWED_PATHS:

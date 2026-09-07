@@ -7,18 +7,19 @@ buttons remotely.
 
 ## Command Center upgrade
 
-- Persistent power-on, graceful shutdown and Wake-on-LAN timers, including
-  one-time, 24-hour and weekly repeats; terminal and web controls share a queue.
-- A dark command-center dashboard with countdowns, pause/resume/delete,
-  activity history, keyboard shortcuts, notes, diagnostics and exports.
-- An expanded synthwave terminal menu, passive diagnostics, KVM notebook,
-  Wake-on-LAN and bounded ATX command timeouts.
-- An additive service, authenticated Unix-socket API, backed-up deployment
-  and rollback; the vendor KVM firmware remains in place.
+- Dual-KVM command deck: select a target, confirm its hostname, then run
+  tracked power/recovery/Wake-on-LAN. Remote control uses existing SSH trust.
+- Civil-time schedules (weekdays/weekends/custom days, date exceptions, DST
+  policy) plus legacy UTC daily/weekly jobs, snooze/skip, and saved presets.
+- Confirmed power-transition tracking, upcoming-action warnings, cancel, and
+  optional HTTPS webhook notifications (off by default; URL never exported).
+- Backup with preview-before-restore. Imported jobs stay inactive.
+- Synthwave / aurora / ember / ice terminal themes, compact mode, search,
+  live watch, and a matching browser dashboard.
 
-Scheduling starts **paused**. No feature tests have been run for this
-upgrade; user acceptance is deferred. See [the operations guide](docs/COMMAND-CENTER.md)
-and [hardware/software research](docs/CAPABILITIES.md).
+Scheduling starts **paused**. Feature tests remain deferred. See
+[the operations guide](docs/COMMAND-CENTER.md) and
+[hardware/software research](docs/CAPABILITIES.md).
 
 ```sh
 ./deploy/push.sh <first-kvm-ssh-alias> <second-kvm-ssh-alias>

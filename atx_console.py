@@ -147,18 +147,24 @@ class ConsoleUI:
         interpolation.
         """
         width = max(width, 0)
-        table = self._gradient_tables.get(width)
+        key = (width, self.theme)
+        table = self._gradient_tables.get(key)
         if table is None:
+            start, end = {
+                "aurora": ((105, 153, 255), (117, 243, 196)),
+                "ember": ((255, 77, 109), (255, 181, 97)),
+                "ice": ((185, 180, 255), (147, 219, 255)),
+            }.get(self.theme, ((242, 34, 255), (5, 217, 232)))
             denom = max(width, 1)
             colors = []
             for offset in range(width):
                 t = offset / denom
-                red = round(242 + (5 - 242) * t)
-                green = round(34 + (217 - 34) * t)
-                blue = round(255 + (232 - 255) * t)
+                red = round(start[0] + (end[0] - start[0]) * t)
+                green = round(start[1] + (end[1] - start[1]) * t)
+                blue = round(start[2] + (end[2] - start[2]) * t)
                 colors.append(self.palette.rgb(red, green, blue))
             table = tuple(colors)
-            self._gradient_tables[width] = table
+            self._gradient_tables[key] = table
         return table
 
     def rule(self, width: int = 50) -> None:
@@ -301,6 +307,8 @@ EXTRA_ITEMS = (
     ("b", "backup", "Export schedules, presets, settings", "OPERATIONS", "SAVE"),
     ("i", "restore backup", "Preview → confirm → import paused", "OPERATIONS", "RESTORE"),
     ("x", "export activity", "Save a JSON audit snapshot", "OPERATIONS", "EXPORT"),
+    ("t", "appearance", "Theme, compact mode, animations", "OPERATIONS", "LOOK"),
+    ("/", "search", "Find a command by name", "OPERATIONS", "FIND"),
 )
 
 
@@ -476,7 +484,7 @@ class ATXConsole:
             f"  {p.muted}No-op if atxpower already sees 'on'. "
             f"Does not force a hard reset.{p.reset}"
         )
-        if self.confirm(f"Pulse power ON on the machine attached to {self.settings.host}?"):
+        if self.confirm(f"Pulse power ON on the machine attached to {self.target_label}?"):
             self.run_atx(
                 "power_on",
                 3,
